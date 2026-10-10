@@ -1,2 +1,2 @@
-# hacklanta-27
-kubrasag/hacklanta-27
+# hacklanta-2027
+
