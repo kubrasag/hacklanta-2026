@@ -6,6 +6,8 @@
 
 import 'dotenv/config';
 import express from 'express';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const app = express();
 app.use(express.json());
@@ -284,6 +286,9 @@ app.get('/api/voices', async (req, res) => {
     res.status(500).json({ error: 'Could not reach ElevenLabs' });
   }
 });
+
+const distDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
+app.use(express.static(distDir));
 
 app.listen(PORT, () => {
   console.log(`🔊 SpeakQuest server running on http://localhost:${PORT}`);
