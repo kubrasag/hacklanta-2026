@@ -13,7 +13,12 @@ app.use(express.json());
 const PORT = process.env.PORT || 3001;
 const ELEVEN_KEY = process.env.ELEVENLABS_API_KEY;
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+// One or more models, separated by commas. The first one is tried first, the others are backups.
+// Example in .env:  GEMINI_MODEL=gemini-3.8-flash,gemini-3.8-flash-lite
+const GEMINI_MODELS = (process.env.GEMINI_MODEL || 'gemini-3.8-flash')
+  .split(',')
+  .map((m) => m.trim())
+  .filter(Boolean);
 
 if (!ELEVEN_KEY) {
   console.warn('⚠️  ELEVENLABS_API_KEY is missing. Add it to the .env file in the project root.');
@@ -24,7 +29,7 @@ if (!GEMINI_KEY) {
 
 // Health check: open http://localhost:3001/api/health to see if the server runs
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, elevenlabs: Boolean(ELEVEN_KEY), gemini: Boolean(GEMINI_KEY) });
+  res.json({ ok: true, elevenlabs: Boolean(ELEVEN_KEY), gemini: Boolean(GEMINI_KEY), geminiModels: GEMINI_MODELS });
 });
 
 // Text to speech: the game sends { text, voiceId } and gets back an mp3
@@ -193,36 +198,72 @@ app.post('/api/feedback', async (req, res) => {
     return res.status(500).json({ error: 'GEMINI_API_KEY is not set on the server' });
   }
 
+  const body = JSON.stringify({
+    systemInstruction: { parts: [{ text: COACH_RULES }] },
+    contents: [{ role: 'user', parts: [{ text: buildPrompt(req.body) }] }],
+    generationConfig: {
+      temperature: 0.6,
+      responseMimeType: 'application/json',
+      responseSchema: FEEDBACK_SCHEMA,
+    },
+  });
+
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: COACH_RULES }] },
-        contents: [{ role: 'user', parts: [{ text: buildPrompt(req.body) }] }],
-        generationConfig: {
-          temperature: 0.6,
-          responseMimeType: 'application/json',
-          responseSchema: FEEDBACK_SCHEMA,
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      const detail = await response.text();
-      console.error('Gemini error', response.status, detail);
-      return res.status(502).json({ error: 'Gemini request failed', detail });
+    const result = await callGemini(body);
+    if (!result.ok) {
+      return res.status(502).json({ error: 'Gemini request failed', detail: result.detail });
     }
-
-    const data = await response.json();
-    const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '{}';
-    res.json(parseFeedback(text));
+    const text = result.data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '{}';
+    res.json({ ...parseFeedback(text), model: result.model });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Could not reach Gemini' });
   }
 });
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const BUSY = new Set([429, 500, 503]);   // "too many requests" or "overloaded": worth trying again
+
+// Tries each model in GEMINI_MODELS. Busy models get 2 quick retries before we move to the next one.
+// Everything must finish within ~8 seconds, so a child never waits too long.
+async function callGemini(body) {
+  const deadline = Date.now() + 8000;
+  let lastDetail = '';
+
+  for (const model of GEMINI_MODELS) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const timeLeft = deadline - Date.now();
+      if (timeLeft < 500) return { ok: false, detail: 'Timed out. ' + lastDetail };
+
+      let response;
+      try {
+        response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
+            body,
+            signal: AbortSignal.timeout(timeLeft),
+          },
+        );
+      } catch (err) {
+        lastDetail = `${model}: ${err.name === 'TimeoutError' ? 'timed out' : err.message}`;
+        console.warn('Gemini', lastDetail);
+        break;   // network problem or timeout: try the next model
+      }
+
+      if (response.ok) {
+        return { ok: true, model, data: await response.json() };
+      }
+
+      lastDetail = `${model} ${response.status}: ${(await response.text()).slice(0, 300)}`;
+      console.warn('Gemini error', lastDetail);
+      if (!BUSY.has(response.status)) break;   // wrong model name or key: retrying will not help
+      if (attempt < 2) await sleep(400 * (attempt + 1));   // wait 0.4s, then 0.8s
+    }
+  }
+  return { ok: false, detail: lastDetail };
+}
 
 // Lists the voices on your ElevenLabs account, handy for picking voice IDs
 app.get('/api/voices', async (req, res) => {
