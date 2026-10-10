@@ -4,10 +4,12 @@
 //   public/assets/town/town_collision.json
 //   public/assets/player/player.png      (4x4 spritesheet, 52x66 frames)
 //
-// Controls: WASD / arrows to walk, E to talk or enter a door, G to show collision, M to mute voices.
+// Controls: WASD / arrows to walk, E to talk or enter a door, G to show collision, M to mute voices,
+// hold SPACE in a dialogue to answer out loud, ESC to leave a dialogue.
 
 import * as Phaser from 'phaser';
 import DialogueBox from '../ui/DialogueBox';
+import StarCounter from '../ui/StarCounter';
 import { NPCS } from '../data/npcs';
 import { setMuted, isMuted } from '../audio/voice';
 
@@ -96,8 +98,12 @@ export default class TownScene extends Phaser.Scene {
       return npc;
     });
 
-    this.dialogue = new DialogueBox();
-    this.events.once('shutdown', () => this.dialogue.destroy());
+    this.stars = new StarCounter(NPCS.length);
+    this.dialogue = new DialogueBox(this.stars);
+    this.events.once('shutdown', () => {
+      this.dialogue.destroy();
+      this.stars.destroy();
+    });
 
     // 5) Door zones (pixel coordinates)
     this.debugLayer.lineStyle(2, 0xffff00, 1);
@@ -179,7 +185,8 @@ export default class TownScene extends Phaser.Scene {
       (n) => Phaser.Math.Distance.Between(this.player.x, this.player.y, n.x, n.y) < 50,
     );
     if (npc) {
-      this.showPrompt(`E: Talk to ${npc.info.name}`);
+      const done = this.stars.has(npc.info.id);
+      this.showPrompt(`E: Talk to ${npc.info.name} ${done ? '⭐' : '🎯'}`);
       if (pressedE) this.talkTo(npc);
       return;
     }
@@ -212,8 +219,8 @@ export default class TownScene extends Phaser.Scene {
     npc.setFrame(DIRS[dir]);
 
     this.prompt.setVisible(false);
-    this.dialogue.open(npc.info.name, npc.info.dialogue, () => {
+    this.dialogue.open(npc.info, () => {
       npc.setFrame(DIRS.down);
-    }, npc.info.voiceId);
+    });
   }
 }

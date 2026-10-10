@@ -1,186 +1,205 @@
 // DialogueBox.js
-// A simple HTML dialogue box drawn on top of the game canvas.
-// HTML is easier than Phaser text for crisp fonts, wrapping and clickable buttons.
-// Every line is also spoken out loud with the NPC's ElevenLabs voice.
-// The player can answer by clicking, pressing 1-3, or holding SPACE and speaking.
+// The conversation box at the bottom of the screen (plain HTML on top of the game canvas).
+//
+// A conversation has three steps:
+//   1. intro  The NPC says its opening lines. Press E to continue.
+//   2. talk   The NPC asks a question. The player holds SPACE and answers out loud.
+//             Gemini checks if the GOAL is reached. Stuck? "Need an idea?" shows example answers.
+//   3. done   The goal is reached. The NPC answers, the player earns a star. Press E to leave.
+// ESC leaves the conversation at any time.
 
 import { speak, stopVoice } from '../audio/voice';
-import { startRecording, stopRecording, isRecording, bestChoice } from '../audio/mic';
+import { startRecording, stopRecording, isRecording } from '../audio/mic';
+import { getFeedback } from '../audio/feedback';
+
+const COLORS = {
+  paper: '#f6e7c8',
+  ink: '#3a2414',
+  wood: '#5a3a22',
+  red: '#b23a2a',
+  green: '#c8e6a0',
+};
+
+// Small helper: create an element with styles in one line
+function el(tag, style = {}, text = '') {
+  const node = document.createElement(tag);
+  Object.assign(node.style, style);
+  if (text) node.textContent = text;
+  return node;
+}
 
 export default class DialogueBox {
-  constructor() {
+  constructor(stars) {
+    this.stars = stars;       // StarCounter, can be null
     this.isOpen = false;
-    this.lines = [];
-    this.index = 0;
+    this.mode = null;         // 'intro' | 'talk' | 'done'
     this.typing = null;
-    this.onClose = null;
 
-    this.root = document.createElement('div');
-    Object.assign(this.root.style, {
+    // ---------- layout ----------
+    this.root = el('div', {
       position: 'fixed', left: '50%', bottom: '24px', transform: 'translateX(-50%)',
       width: 'min(720px, calc(100vw - 32px))', boxSizing: 'border-box',
-      background: '#f6e7c8', border: '4px solid #5a3a22', borderRadius: '10px',
-      boxShadow: '0 6px 0 #3a2414', padding: '14px 18px 16px',
-      fontFamily: '"Courier New", monospace', color: '#3a2414',
+      background: COLORS.paper, border: `4px solid ${COLORS.wood}`, borderRadius: '10px',
+      boxShadow: `0 6px 0 ${COLORS.ink}`, padding: '14px 18px 12px',
+      fontFamily: '"Courier New", monospace', color: COLORS.ink,
       display: 'none', zIndex: 10,
     });
 
-    this.nameTag = document.createElement('div');
-    Object.assign(this.nameTag.style, {
-      display: 'inline-block', background: '#5a3a22', color: '#f6e7c8',
-      padding: '2px 10px', borderRadius: '6px', fontWeight: 'bold',
-      fontSize: '14px', marginBottom: '8px',
+    const header = el('div', { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' });
+    this.nameTag = el('div', {
+      background: COLORS.wood, color: COLORS.paper, padding: '2px 10px',
+      borderRadius: '6px', fontWeight: 'bold', fontSize: '14px',
     });
+    this.goalEl = el('div', { fontSize: '13px', fontWeight: 'bold' });
+    header.append(this.nameTag, this.goalEl);
 
-    this.text = document.createElement('div');
-    Object.assign(this.text.style, { fontSize: '18px', lineHeight: '1.5', minHeight: '54px' });
+    this.text = el('div', { fontSize: '18px', lineHeight: '1.5', minHeight: '54px' });
 
-    this.choicesEl = document.createElement('div');
-    Object.assign(this.choicesEl.style, { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '10px' });
+    // Row with the mic button and the "Need an idea?" button
+    this.actions = el('div', { display: 'none', gap: '8px', marginTop: '10px', flexWrap: 'wrap' });
+    this.micBtn = el('button', this.buttonStyle(COLORS.wood, COLORS.paper));
+    this.hintBtn = el('button', this.buttonStyle('#fffaf0', COLORS.ink, '#b08a5a'), '💡 Need an idea?');
+    this.actions.append(this.micBtn, this.hintBtn);
 
-    // "You said: ..." line under the choices
-    this.saidEl = document.createElement('div');
-    Object.assign(this.saidEl.style, { fontSize: '14px', marginTop: '8px', minHeight: '18px', fontStyle: 'italic' });
+    // Example answers (hidden until the player asks for help)
+    this.hintsEl = el('div', { display: 'none', flexDirection: 'column', gap: '6px', marginTop: '10px' });
 
-    // Microphone button (hold to talk)
-    this.micBtn = document.createElement('button');
-    Object.assign(this.micBtn.style, {
-      marginTop: '10px', fontFamily: 'inherit', fontSize: '15px', cursor: 'pointer',
-      background: '#5a3a22', color: '#f6e7c8', border: 'none', borderRadius: '6px',
-      padding: '8px 12px', display: 'none', userSelect: 'none',
+    this.saidEl = el('div', { fontSize: '14px', marginTop: '8px', minHeight: '18px', fontStyle: 'italic' });
+    this.tipEl = el('div', {
+      fontSize: '14px', marginTop: '6px', padding: '6px 10px', borderRadius: '6px',
+      background: '#fff4c2', border: '2px dashed #d9b44a', display: 'none',
     });
+    this.footer = el('div', { textAlign: 'right', fontSize: '12px', opacity: '0.6', marginTop: '6px' });
+
+    this.root.append(header, this.text, this.actions, this.hintsEl, this.saidEl, this.tipEl, this.footer);
+    document.body.appendChild(this.root);
+
+    // ---------- input ----------
     this.setMicLabel('idle');
     this.micBtn.addEventListener('mousedown', () => this.startListening());
     this.micBtn.addEventListener('mouseup', () => this.stopListening());
     this.micBtn.addEventListener('mouseleave', () => { if (isRecording()) this.stopListening(); });
+    this.hintBtn.addEventListener('click', () => this.showHints());
 
-    this.hint = document.createElement('div');
-    Object.assign(this.hint.style, { textAlign: 'right', fontSize: '12px', opacity: '0.6', marginTop: '6px' });
-
-    this.root.append(this.nameTag, this.text, this.choicesEl, this.micBtn, this.saidEl, this.hint);
-    document.body.appendChild(this.root);
-
-    // Number keys pick a choice
-    this.keyHandler = (e) => {
-      const n = Number(e.key);
-      if (this.isOpen && this.currentChoices && n >= 1 && n <= this.currentChoices.length) {
-        this.pick(this.currentChoices[n - 1]);
+    this.onKeyDown = (e) => {
+      if (!this.isOpen) return;
+      if (e.code === 'Escape') {
+        this.close();
+      } else if (e.code === 'Space' && this.mode === 'talk') {
+        e.preventDefault();
+        if (!e.repeat) this.startListening();
+      } else if (this.mode === 'talk' && this.hintsVisible) {
+        const n = Number(e.key);
+        if (n >= 1 && n <= this.npc.hints.length) this.useHint(this.npc.hints[n - 1]);
       }
     };
-    window.addEventListener('keydown', this.keyHandler);
-
-    // Hold SPACE to talk, release to send
-    this.spaceDown = (e) => {
-      if (e.code !== 'Space' || !this.isOpen || !this.currentChoices) return;
-      e.preventDefault();
-      if (!e.repeat) this.startListening();
-    };
-    this.spaceUp = (e) => {
-      if (e.code !== 'Space' || !this.isOpen) return;
-      e.preventDefault();
-      this.stopListening();
-    };
-    window.addEventListener('keydown', this.spaceDown);
-    window.addEventListener('keyup', this.spaceUp);
-  }
-
-  setMicLabel(state) {
-    const labels = {
-      idle: '🎤 Hold SPACE (or this button) and say your answer',
-      listening: '🔴 Listening... release to send',
-      thinking: '⏳ Understanding...',
-    };
-    this.micBtn.textContent = labels[state];
-    this.micBtn.style.background = state === 'listening' ? '#b23a2a' : '#5a3a22';
-  }
-
-  async startListening() {
-    if (!this.currentChoices || this.busy || isRecording()) return;
-    stopVoice();                       // don't record the NPC's own voice
-    try {
-      await startRecording();
-      this.setMicLabel('listening');
-      this.saidEl.textContent = '';
-    } catch (err) {
-      console.warn(err);
-      this.saidEl.textContent = 'Microphone is blocked. Allow it in the browser, or pick an answer.';
-    }
-  }
-
-  async stopListening() {
-    if (!isRecording()) return;
-    this.busy = true;
-    this.setMicLabel('thinking');
-    try {
-      const said = (await stopRecording()).trim();
-      if (!this.currentChoices) return;            // dialogue moved on meanwhile
-      if (!said) {
-        this.saidEl.textContent = "I didn't hear anything. Try again!";
-        return;
+    this.onKeyUp = (e) => {
+      if (this.isOpen && e.code === 'Space') {
+        e.preventDefault();
+        this.stopListening();
       }
-      const match = bestChoice(said, this.currentChoices);
-      if (match) {
-        this.saidEl.textContent = `You said: "${said}" ✅`;
-        this.highlight(match.choice);
-        setTimeout(() => this.pick(match.choice), 700);
-      } else {
-        this.saidEl.textContent = `You said: "${said}". Hmm, try one of the answers above.`;
-      }
-    } catch (err) {
-      console.warn(err);
-      this.saidEl.textContent = 'Could not understand. Is the voice server running?';
-    } finally {
-      this.busy = false;
-      this.setMicLabel('idle');
-    }
+    };
+    window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('keyup', this.onKeyUp);
   }
 
-  highlight(choice) {
-    const i = this.currentChoices.indexOf(choice);
-    const btn = this.choicesEl.children[i];
-    if (btn) {
-      btn.style.background = '#c8e6a0';
-      btn.style.borderColor = '#5a8a2a';
-    }
+  buttonStyle(bg, color, border) {
+    return {
+      fontFamily: 'inherit', fontSize: '15px', cursor: 'pointer', userSelect: 'none',
+      background: bg, color, border: border ? `2px solid ${border}` : 'none',
+      borderRadius: '6px', padding: '8px 12px',
+    };
   }
 
-  open(name, lines, onClose, voiceId) {
-    this.voiceId = voiceId;
-    this.isOpen = true;
-    this.lines = lines;
-    this.index = 0;
+  // ================= opening and closing =================
+
+  open(npc, onClose) {
+    this.npc = npc;
     this.onClose = onClose;
-    this.nameTag.textContent = name;
+    this.isOpen = true;
+    this.history = [];          // [{ who: 'npc' | 'child', text }], sent to Gemini
+    this.attempts = 0;
+    this.index = 0;
+
+    this.nameTag.textContent = npc.name;
+    this.renderGoal();
     this.root.style.display = 'block';
-    this.show(this.lines[0]);
+    this.setMode('intro');
+    this.showLine(npc.dialogue[0].say);
   }
 
-  // Called when the player presses E while the box is open
+  close() {
+    if (!this.isOpen) return;
+    stopVoice();
+    if (isRecording()) stopRecording().catch(() => {});
+    clearInterval(this.typing);
+    this.typing = null;
+    this.isOpen = false;
+    this.mode = null;
+    this.root.style.display = 'none';
+    if (this.onClose) this.onClose();
+  }
+
+  // Called by TownScene when the player presses E
   next() {
-    if (this.typing) {                 // first press: finish the typing effect
+    if (this.typing) {                // first press finishes the typing effect
       this.finishTyping();
       return;
     }
-    if (this.currentChoices) return;   // waiting for the player to pick an answer
+    if (this.mode === 'done') {
+      this.close();
+      return;
+    }
+    if (this.mode !== 'intro') return; // in talk mode the player answers with SPACE
     this.index += 1;
-    if (this.index < this.lines.length) this.show(this.lines[this.index]);
-    else this.close();
+    this.showLine(this.npc.dialogue[this.index].say);
   }
 
-  show(line) {
-    this.choicesEl.innerHTML = '';
-    this.currentChoices = null;
-    this.hint.textContent = '';
-    this.micBtn.style.display = 'none';
-    if (!line.keepSaid) this.saidEl.textContent = '';
-    speak(line.say, this.voiceId);
-    this.typeText(line.say, () => {
-      if (line.choices) this.showChoices(line.choices);
-      else this.hint.textContent = 'E ▶';
+  // ================= what is on screen =================
+
+  setMode(mode) {
+    this.mode = mode;
+    const talking = mode === 'talk';
+    this.actions.style.display = talking ? 'flex' : 'none';
+    this.hintBtn.style.display = talking && !this.hintsVisible ? 'inline-block' : 'none';
+    if (!talking) this.hideHints();
+
+    const footers = {
+      intro: 'E ▶   ·   ESC to leave',
+      talk: 'Hold SPACE and speak   ·   ESC to leave',
+      done: 'E to finish',
+    };
+    this.footer.textContent = footers[mode] || '';
+  }
+
+  renderGoal() {
+    const done = this.stars && this.stars.has(this.npc.id);
+    this.goalEl.textContent = done ? `✅ ${this.npc.goal}` : `🎯 Goal: ${this.npc.goal}`;
+  }
+
+  // An NPC line with the typing effect. The last intro line switches to talk mode.
+  showLine(text) {
+    this.saidEl.textContent = '';
+    this.tipEl.style.display = 'none';
+    this.history.push({ who: 'npc', text });
+    speak(text, this.npc.voiceId);
+    this.typeText(text, () => {
+      const isQuestion = this.mode === 'intro' && this.index === this.npc.dialogue.length - 1;
+      if (isQuestion) this.setMode('talk');
     });
   }
 
+  // The NPC answers during talk mode (no typing effect, keeps hints and messages)
+  npcSays(text) {
+    clearInterval(this.typing);
+    this.typing = null;
+    this.text.textContent = text;
+    this.history.push({ who: 'npc', text });
+    speak(text, this.npc.voiceId);
+  }
+
   typeText(full, done) {
+    clearInterval(this.typing);
     this.fullText = full;
     this.afterTyping = done;
     this.text.textContent = '';
@@ -196,49 +215,132 @@ export default class DialogueBox {
     clearInterval(this.typing);
     this.typing = null;
     this.text.textContent = this.fullText;
-    if (this.afterTyping) this.afterTyping();
+    const done = this.afterTyping;
+    this.afterTyping = null;
+    if (done) done();
   }
 
-  showChoices(choices) {
-    this.currentChoices = choices;
-    choices.forEach((choice, i) => {
-      const btn = document.createElement('button');
-      btn.textContent = `${i + 1}. ${choice.text}`;
-      Object.assign(btn.style, {
-        textAlign: 'left', fontFamily: 'inherit', fontSize: '16px', cursor: 'pointer',
-        background: '#fffaf0', color: '#3a2414', border: '2px solid #b08a5a',
-        borderRadius: '6px', padding: '6px 10px',
-      });
+  showTip(tip) {
+    if (tip) {
+      this.tipEl.textContent = `💡 You can also say: "${tip}"`;
+      this.tipEl.style.display = 'block';
+    } else {
+      this.tipEl.style.display = 'none';
+    }
+  }
+
+  // ================= hints =================
+
+  showHints() {
+    this.hintsVisible = true;
+    this.hintBtn.style.display = 'none';
+    this.hintsEl.innerHTML = '';
+    this.hintsEl.style.display = 'flex';
+    const title = el('div', { fontSize: '13px', opacity: '0.75' }, 'Try saying one of these out loud:');
+    this.hintsEl.appendChild(title);
+    this.npc.hints.forEach((hint, i) => {
+      const btn = el('button', {
+        ...this.buttonStyle('#fffaf0', COLORS.ink, '#b08a5a'), textAlign: 'left', fontSize: '16px', padding: '6px 10px',
+      }, `${i + 1}. ${hint.text}`);
       btn.onmouseenter = () => { btn.style.background = '#ffe9b8'; };
       btn.onmouseleave = () => { btn.style.background = '#fffaf0'; };
-      btn.onclick = () => this.pick(choice);
-      this.choicesEl.appendChild(btn);
+      btn.onclick = () => this.useHint(hint);
+      this.hintsEl.appendChild(btn);
     });
-    this.micBtn.style.display = 'inline-block';
   }
 
-  pick(choice) {
-    // Replace the rest of the conversation with the NPC's reply to this answer
-    this.lines = [{ say: choice.reply, keepSaid: true }];
-    this.index = 0;
-    this.show(this.lines[0]);
+  hideHints() {
+    this.hintsVisible = false;
+    this.hintsEl.style.display = 'none';
   }
 
-  close() {
-    stopVoice();
-    if (isRecording()) stopRecording().catch(() => {});
-    this.isOpen = false;
-    this.root.style.display = 'none';
-    this.currentChoices = null;
-    if (this.onClose) this.onClose();
+  // Clicking a hint finishes the conversation, but only speaking earns a star
+  useHint(hint) {
+    if (this.mode !== 'talk' || this.busy) return;
+    this.history.push({ who: 'child', text: hint.text });
+    this.saidEl.textContent = `You chose: "${hint.text}"`;
+    this.finish(hint.reply, { spoken: false });
+  }
+
+  // ================= microphone =================
+
+  setMicLabel(state) {
+    const labels = {
+      idle: '🎤 Hold SPACE to speak',
+      listening: '🔴 Listening... let go to send',
+      thinking: '⏳ Thinking...',
+    };
+    this.micBtn.textContent = labels[state];
+    this.micBtn.style.background = state === 'listening' ? COLORS.red : COLORS.wood;
+  }
+
+  async startListening() {
+    if (this.mode !== 'talk' || this.busy || isRecording()) return;
+    stopVoice();                       // don't record the NPC's own voice
+    try {
+      await startRecording();
+      this.setMicLabel('listening');
+      this.saidEl.textContent = '';
+    } catch (err) {
+      console.warn(err);
+      this.saidEl.textContent = 'The microphone is blocked. Allow it in the browser, or tap "Need an idea?".';
+    }
+  }
+
+  async stopListening() {
+    if (!isRecording()) return;
+    this.busy = true;
+    this.setMicLabel('thinking');
+    try {
+      const said = (await stopRecording()).trim();
+      if (this.mode !== 'talk') return;           // the player left meanwhile
+      if (!said) {
+        this.saidEl.textContent = "I didn't hear anything. Hold SPACE a bit longer and try again!";
+        return;
+      }
+
+      this.saidEl.textContent = `You said: "${said}"`;
+      const fb = await getFeedback({ npc: this.npc, history: this.history, said });
+      if (this.mode !== 'talk') return;
+      this.history.push({ who: 'child', text: said });
+      this.showTip(fb.tip);
+
+      if (fb.goalDone) {
+        this.saidEl.textContent = `You said: "${said}" ✅ ${fb.praise || ''}`;
+        this.finish(fb.reply, { spoken: true });
+      } else {
+        this.attempts += 1;
+        this.npcSays(fb.reply);
+        // After two tries, offer the example answers automatically
+        if (this.attempts >= 2 && !this.hintsVisible) this.showHints();
+      }
+    } catch (err) {
+      console.warn(err);
+      this.saidEl.textContent = 'Could not understand. Is the voice server running?';
+    } finally {
+      this.busy = false;
+      this.setMicLabel('idle');
+    }
+  }
+
+  // ================= goal reached =================
+
+  finish(reply, { spoken }) {
+    const newStar = spoken && this.stars ? this.stars.add(this.npc.id) : false;
+    this.renderGoal();
+    this.setMode('done');
+    this.npcSays(reply);
+    if (newStar) {
+      this.footer.textContent = '⭐ +1 star!   ·   E to finish';
+    } else if (!spoken && !(this.stars && this.stars.has(this.npc.id))) {
+      this.footer.textContent = 'Say it out loud next time to earn a ⭐   ·   E to finish';
+    }
   }
 
   destroy() {
-    stopVoice();
-    clearInterval(this.typing);
-    window.removeEventListener('keydown', this.keyHandler);
-    window.removeEventListener('keydown', this.spaceDown);
-    window.removeEventListener('keyup', this.spaceUp);
+    this.close();
+    window.removeEventListener('keydown', this.onKeyDown);
+    window.removeEventListener('keyup', this.onKeyUp);
     this.root.remove();
   }
 }
