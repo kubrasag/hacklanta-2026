@@ -66,6 +66,42 @@ app.post('/api/tts', async (req, res) => {
   }
 });
 
+// Speech to text: the game sends the recorded audio, we send back { text }
+app.post('/api/stt', express.raw({ type: '*/*', limit: '10mb' }), async (req, res) => {
+  if (!ELEVEN_KEY) {
+    return res.status(500).json({ error: 'ELEVENLABS_API_KEY is not set on the server' });
+  }
+  if (!req.body || !req.body.length) {
+    return res.status(400).json({ error: 'No audio received' });
+  }
+
+  try {
+    const type = req.headers['content-type'] || 'audio/webm';
+    const form = new FormData();
+    form.append('model_id', process.env.ELEVENLABS_STT_MODEL || 'scribe_v1');
+    form.append('language_code', 'en');
+    form.append('file', new Blob([req.body], { type }), 'answer.webm');
+
+    const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+      method: 'POST',
+      headers: { 'xi-api-key': ELEVEN_KEY },
+      body: form,
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      console.error('ElevenLabs STT error', response.status, detail);
+      return res.status(response.status).json({ error: 'Speech to text failed', detail });
+    }
+
+    const data = await response.json();
+    res.json({ text: data.text || '' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Could not reach ElevenLabs' });
+  }
+});
+
 // Lists the voices on your ElevenLabs account, handy for picking voice IDs
 app.get('/api/voices', async (req, res) => {
   if (!ELEVEN_KEY) return res.status(500).json({ error: 'ELEVENLABS_API_KEY is not set' });
