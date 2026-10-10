@@ -3,13 +3,13 @@
 //   public/assets/town/town_bg.png
 //   public/assets/town/town_collision.json
 //   public/assets/player/player.png      (4x4 spritesheet, 52x66 frames)
-//   public/assets/npcs/*.png             (one spritesheet per NPC, same layout)
 //
-// Controls: WASD / arrows to walk, E to talk or enter a door, G to show collision.
+// Controls: WASD / arrows to walk, E to talk or enter a door, G to show collision, M to mute voices.
 
 import * as Phaser from 'phaser';
 import DialogueBox from '../ui/DialogueBox';
 import { NPCS } from '../data/npcs';
+import { setMuted, isMuted } from '../audio/voice';
 
 // Spritesheet layout: one row per direction, 4 walking frames each
 const DIRS = { down: 0, left: 4, right: 8, up: 12 };
@@ -84,7 +84,7 @@ export default class TownScene extends Phaser.Scene {
     this.physics.add.collider(this.player, this.walls);
     this.facing = 'down';
 
-    // 5) NPCs: they stand still, block the player and can be talked to with E
+    // NPCs: they stand still, block the player and can be talked to with E
     this.npcs = NPCS.map((n) => {
       this.add.ellipse(n.x, n.y + 30, 26, 8, 0x000000, 0.25).setDepth(9);
       const npc = this.physics.add.sprite(n.x, n.y, n.texture, DIRS.down).setDepth(10);
@@ -99,7 +99,7 @@ export default class TownScene extends Phaser.Scene {
     this.dialogue = new DialogueBox();
     this.events.once('shutdown', () => this.dialogue.destroy());
 
-    // 6) Door zones (pixel coordinates)
+    // 5) Door zones (pixel coordinates)
     this.debugLayer.lineStyle(2, 0xffff00, 1);
     this.zones = data.zones.map((z) => {
       const zone = this.add.zone(z.x, z.y, z.w, z.h).setOrigin(0);
@@ -114,14 +114,14 @@ export default class TownScene extends Phaser.Scene {
       backgroundColor: '#3a2e28', padding: { x: 4, y: 2 },
     }).setDepth(30).setOrigin(0.5, 1).setVisible(false);
 
-    // 7) Camera and input
+    // 6) Camera and input
     this.physics.world.setBounds(0, 0, mapW, mapH);
     this.cameras.main.setBounds(0, 0, mapW, mapH);
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
     this.cameras.main.setZoom(1.5);
 
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.keys = this.input.keyboard.addKeys('W,A,S,D,E,G');
+    this.keys = this.input.keyboard.addKeys('W,A,S,D,E,G,M');
   }
 
   update() {
@@ -162,7 +162,12 @@ export default class TownScene extends Phaser.Scene {
       this.player.anims.play(`walk-${this.facing}`, true);
     } else {
       this.player.anims.stop();
-      this.player.setFrame(DIRS[this.facing]); // stand still, facing the last direction
+      this.player.setFrame(DIRS[this.facing]);   // stand still, facing the last direction
+    }
+
+    if (Phaser.Input.Keyboard.JustDown(k.M)) {
+      setMuted(!isMuted());
+      console.log(isMuted() ? 'Voices muted' : 'Voices on');
     }
 
     if (Phaser.Input.Keyboard.JustDown(k.G)) {
@@ -209,6 +214,6 @@ export default class TownScene extends Phaser.Scene {
     this.prompt.setVisible(false);
     this.dialogue.open(npc.info.name, npc.info.dialogue, () => {
       npc.setFrame(DIRS.down);
-    });
+    }, npc.info.voiceId);
   }
 }

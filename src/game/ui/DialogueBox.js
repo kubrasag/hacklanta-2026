@@ -1,6 +1,9 @@
 // DialogueBox.js
 // A simple HTML dialogue box drawn on top of the game canvas.
 // HTML is easier than Phaser text for crisp fonts, wrapping and clickable buttons.
+// Every line is also spoken out loud with the NPC's ElevenLabs voice.
+
+import { speak, stopVoice } from '../audio/voice';
 
 export default class DialogueBox {
   constructor() {
@@ -49,7 +52,8 @@ export default class DialogueBox {
     window.addEventListener('keydown', this.keyHandler);
   }
 
-  open(name, lines, onClose) {
+  open(name, lines, onClose, voiceId) {
+    this.voiceId = voiceId;
     this.isOpen = true;
     this.lines = lines;
     this.index = 0;
@@ -75,6 +79,7 @@ export default class DialogueBox {
     this.choicesEl.innerHTML = '';
     this.currentChoices = null;
     this.hint.textContent = '';
+    speak(line.say, this.voiceId);
     this.typeText(line.say, () => {
       if (line.choices) this.showChoices(line.choices);
       else this.hint.textContent = 'E ▶';
@@ -125,6 +130,7 @@ export default class DialogueBox {
   }
 
   close() {
+    stopVoice();
     this.isOpen = false;
     this.root.style.display = 'none';
     this.currentChoices = null;
@@ -132,6 +138,7 @@ export default class DialogueBox {
   }
 
   destroy() {
+    stopVoice();
     clearInterval(this.typing);
     window.removeEventListener('keydown', this.keyHandler);
     this.root.remove();

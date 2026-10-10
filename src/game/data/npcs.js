@@ -2,6 +2,7 @@
 // Every NPC in the town. To add a new one, copy a block and change it.
 //   x, y      position on the map (pixels)
 //   texture   file name in public/assets/npcs/ (without .png)
+//   voiceId   ElevenLabs voice ID (find yours at http://localhost:3001/api/voices)
 //   dialogue  lines in order; a line with "choices" waits for the player's answer
 
 export const NPCS = [
@@ -11,6 +12,8 @@ export const NPCS = [
     x: 870,
     y: 715,
     texture: 'guide',
+    // Leo (guide)
+    voiceId: 'bIHbv24MWmeRgasZH58o', // Will: young, relaxed, friendly
     dialogue: [
       { say: "Hi there! You must be new in town. I'm Leo." },
       { say: 'This is the town square. Every shop is close by.' },
@@ -30,6 +33,8 @@ export const NPCS = [
     x: 505,
     y: 370,
     texture: 'baker',
+    // Baker Tom
+    voiceId: 'iP95p4xoKVk53GoZ742B', // Chris: charming, down to earth
     dialogue: [
       { say: 'Good morning! Welcome to my bakery.' },
       { say: 'Everything is fresh from the oven today.' },
@@ -49,6 +54,8 @@ export const NPCS = [
     x: 1060,
     y: 350,
     texture: 'barista',
+    // Mia (barista)
+    voiceId: 'cgSgspJ2msm6clMCkdW9', // Jessica: playful, bright, warm
     dialogue: [
       { say: 'Hello! Welcome to the café.' },
       {
@@ -67,6 +74,8 @@ export const NPCS = [
     x: 452,
     y: 752,
     texture: 'grocer',
+    // Sam (grocer)
+    voiceId: 'IKne3meq5aSn9XLyUdCD', // Charlie: energetic, Australian accent
     dialogue: [
       { say: 'Fresh fruit and vegetables! Straight from the farm.' },
       {
@@ -85,6 +94,8 @@ export const NPCS = [
     x: 1230,
     y: 830,
     texture: 'librarian',
+    // Ms. Lily (librarian)
+    voiceId: 'pFZP5JQG7iQjIQuC4Bku', // Lily: calm, British accent
     dialogue: [
       { say: 'Hello. Welcome to the library.' },
       { say: 'Please remember to speak quietly inside.' },
