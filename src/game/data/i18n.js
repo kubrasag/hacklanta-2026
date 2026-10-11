@@ -8,7 +8,6 @@ import { fill } from '../core/text';
 const STRINGS = {
   en: {
     tabBookmarks: 'Bookmarks',
-    howEnter: 'Enter / leave buildings',
     bookmarkHelp: 'Hover over dialogue, then bookmark its translation. Press 4 to open this page.',
     emptyBookmarks: 'Your saved words and phrases will appear here.',
     removeBookmark: 'Remove bookmark',
@@ -139,7 +138,6 @@ const STRINGS = {
   },
   tr: {
     tabBookmarks: 'Kayıtlar',
-    howEnter: 'Binalara gir / çık',
     bookmarkHelp: 'Diyaloğun üzerine gel ve çeviriyi kaydet. Bu sayfayı açmak için 4’e bas.',
     emptyBookmarks: 'Kaydettiğin kelimeler ve ifadeler burada görünecek.',
     removeBookmark: 'Kaydı kaldır',
@@ -271,7 +269,6 @@ const STRINGS = {
   },
   es: {
     tabBookmarks: 'Guardados',
-    howEnter: 'Entrar / salir',
     bookmarkHelp: 'Pasa el cursor sobre el diálogo y guarda la traducción. Pulsa 4 para abrir esta página.',
     emptyBookmarks: 'Tus palabras y frases guardadas aparecerán aquí.',
     removeBookmark: 'Eliminar guardado',

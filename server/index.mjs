@@ -175,7 +175,7 @@ Fields:
 
 Memory and consistency (very important):
 - PHYSICAL LOCATION and WORLD STATE are authoritative and override any location or completed action in PROFILE, RIGHT NOW, or old dialogue.
-  Outside, never welcome someone into your workplace or claim you are indoors. Talk about it as a place elsewhere.
+  All gameplay takes place outdoors. Buildings cannot be entered. Never invite the player inside, direct them to indoor objects, or claim you are indoors. Shopping, book requests, and all quests happen with villagers outdoors. Past stories about workplaces remain memories, not accessible locations.
   WORLD STATE dog="following" means Biscuit is following THE PLAYER, never you or another NPC.
   dog="home" means he was returned to Mia and is safe. Never say either is still missing.
 - You cannot walk with or follow the player, fetch or deliver objects, teleport, visit another place on request,
@@ -322,7 +322,7 @@ app.post('/api/backstories', async (req, res) => {
   if (!ids.length) return res.status(400).json({ error: 'Valid villager ids required' });
   const language = { en: 'English', tr: 'Turkish', es: 'Spanish' }[req.body.help] || 'English';
   const result = await callGemini((fast) => JSON.stringify({
-    systemInstruction: { parts: [{ text: `Write a lasting personal backstory for each cozy village character in ${language}. Preserve every supplied fact. Add a childhood anecdote, a relationship, a personal wish, and a small detail tied to their home or workplace. 80-110 words each. These are permanent past facts, not current events. Do not resolve the dog quest, invent game abilities, promise to travel with the player, or add new locations or characters that must appear in the game. Return a JSON object mapping each supplied id to its story string.` }] },
+    systemInstruction: { parts: [{ text: `Write a lasting personal backstory for each cozy village character in ${language}. Preserve every supplied fact. Add a childhood anecdote, a relationship, a personal wish, and a small detail tied to their home or workplace. 80-110 words each. These are permanent past facts, not current events. Buildings cannot be entered in this game; never require the player to visit an interior or inspect indoor objects. Do not resolve the dog quest, invent game abilities, promise to travel with the player, or add new locations or characters that must appear in the game. Return a JSON object mapping each supplied id to its story string.` }] },
     contents: [{ role: 'user', parts: [{ text: JSON.stringify(Object.fromEntries(ids.map((id) => [id, NPCS[id].profile]))) }] }],
     generationConfig: { responseMimeType: 'application/json', responseSchema: { type: 'OBJECT', properties: Object.fromEntries(ids.map((id) => [id, { type: 'STRING' }])), required: ids }, ...(fast ? { thinkingConfig: { thinkingLevel: 'low' } } : {}) },
   }));

@@ -49,20 +49,27 @@ try {
   assert.doesNotMatch(offline.lily, /this is the library/);
   console.log('PASS phase 1: dog state, capability fallback, repeat-visit checkpoints');
 
-  for (const [id, point] of Object.entries({ bakery: [462, 390], cafe: [1128, 390], market: [403, 830], library: [1288, 845] })) {
-    await tp(...point); await page.keyboard.press('f'); await wait();
-    assert.equal(await page.evaluate(() => window.__wh.scene.currentInterior?.id), id);
-    assert.match(await page.evaluate(() => window.__wh.scene.conversationContext('lily').location), /Inside/);
-    await page.screenshot({ path: `test-results/${id}.png` });
-    const p = await page.evaluate(() => { const p = window.__wh.scene.currentInterior.props[0]; return [2100 + p.x, 100 + p.y + 35]; });
-    await tp(...p); await page.keyboard.press('e'); await wait();
-    assert.equal(await page.evaluate(() => window.__wh.director.dialogue.isOpen), true);
-    await close();
+  for (const point of [[462, 390], [1128, 390], [403, 830], [1288, 845]]) {
+    await tp(...point);
+    const before = await page.evaluate(() => [window.__wh.scene.player.x, window.__wh.scene.player.y]);
     await page.keyboard.press('f'); await wait();
-    assert.equal(await page.evaluate(() => window.__wh.scene.currentInterior), null);
+    const after = await page.evaluate(() => [window.__wh.scene.player.x, window.__wh.scene.player.y]);
+    assert.ok(Math.hypot(after[0] - before[0], after[1] - before[1]) < 10);
+    assert.equal(await page.$('.room-hint'), null);
+    assert.match(await page.evaluate(() => window.__wh.scene.conversationContext().location), /Buildings cannot be entered/);
     assert.equal(await page.evaluate(() => Object.values(window.__wh.scene.npcs).every((n) => n.visible && n.body.enable)), true);
   }
-  console.log('PASS phase 2: all four interiors, inspectable lore, return to town');
+  const recovered = await page.evaluate(() => {
+    const { scene, store } = window.__wh;
+    scene.startPlay({ pos: [2420, 465], time: store.state.time, dog: store.state.dog });
+    return { actual: [scene.player.x, scene.player.y], expected: scene.mapData.spawn };
+  });
+  assert.deepEqual(recovered.actual, recovered.expected);
+  assert.match(await page.evaluate(async () => {
+    const { offlineChat } = await import('/src/game/systems/villagers.js');
+    return offlineChat('lily', 'Can we go inside the library?').reply;
+  }), /outside/);
+  console.log('PASS phase 2: buildings stay outdoors, NPCs available, old room position recovers');
 
   await tp(805, 790); await page.keyboard.press('e'); await wait();
   assert.equal(await page.evaluate(() => window.__wh.director.dialogue.pending?.kind), 'continue');
@@ -120,7 +127,6 @@ try {
   // The saved language pair is restored on the title screen.
   await page.click('.title-actions .btn'); await page.waitForFunction(() => window.__wh?.scene.playing);
   assert.equal(await page.evaluate(() => window.__wh.store.state.bookmarks.length), 1);
-  assert.equal(await page.evaluate(() => window.__wh.store.state.discoveries.length), 4);
   assert.match(await page.evaluate(() => window.__wh.store.state.chats.mia.map((l) => l.text).join(' ')), /library/);
   console.log('PASS phase 3: free chat before quest, popup bookmark, save/reload');
   await page.evaluate(() => { const { store, director } = window.__wh; store.newGame('en', 'es'); director.begin(true); });

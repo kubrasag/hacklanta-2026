@@ -6,7 +6,7 @@ The test uses `puppeteer-core` and a locally installed Chrome. Install the test 
 `lib/esm/puppeteer/puppeteer-core.js`. Set `CHROME_PATH` for a different browser executable.
 Screenshots are written to the ignored `test-results/` directory.
 
-The browser test mocks API calls and covers NPC memory, all four interiors, story discoveries,
+The browser test mocks API calls and covers NPC memory, outdoor-only building boundaries,
 translation bookmarks, reload persistence, and every main and side quest through the festival.
 
 For opt-in live checks, start the API on port 3011 and run `node tests/live-api.mjs`.

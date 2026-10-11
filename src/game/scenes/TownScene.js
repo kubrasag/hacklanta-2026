@@ -11,7 +11,6 @@ import { bus } from '../core/bus';
 import { NPCS, NPC_ORDER } from '../data/npcs';
 import { typing } from '../ui/dom';
 import { sfx } from '../audio/sfx';
-import { installInteriors, updateInteriors, fitInteriorCamera } from './interiorWorld';
 
 const DIRS = { down: 0, left: 4, right: 8, up: 12 };
 const CHAR_TEXTURES = ['player', 'guide', 'baker', 'barista', 'grocer', 'librarian'];
@@ -152,7 +151,6 @@ export default class TownScene extends Phaser.Scene {
     this.stepTimer = 0;
     this.saveTimer = 0;
 
-    installInteriors(this);
     bus.emit('scene:ready', this);
   }
 
@@ -219,7 +217,6 @@ export default class TownScene extends Phaser.Scene {
     const { width, height } = this.scale.gameSize;
     const zoom = Phaser.Math.Clamp(Math.min(width / 700, height / 440), 1.5, 3.2);
     this.cameras.main.setZoom(Math.round(zoom * 4) / 4);
-    if (this.currentInterior) fitInteriorCamera(this);
   }
 
   // ---------- title tour and starting to play ----------
@@ -242,7 +239,10 @@ export default class TownScene extends Phaser.Scene {
     this.playing = true;
     const cam = this.cameras.main;
     cam.panEffect.reset();
-    const [x, y] = pos || this.mapData.spawn;
+    // Older saves keep outdoor positions; recover any invalid or former room coordinates.
+    const validPos = Array.isArray(pos) && pos.length === 2 && pos.every(Number.isFinite)
+      && pos[0] > 0 && pos[0] < this.mapData.width && pos[1] > 0 && pos[1] < this.mapData.height;
+    const [x, y] = validPos ? pos : this.mapData.spawn;
     this.player.setPosition(x, y).setVisible(true);
     this.player.setFrame(DIRS.up);
     cam.startFollow(this.player, true, 0.12, 0.12);
@@ -273,7 +273,6 @@ export default class TownScene extends Phaser.Scene {
 
   // In the evening everyone gathers at the fountain
   placeNpcs(festival) {
-    if (this.currentInterior) { this.pendingFestival = festival; return; }
     const spots = festival ? this.mapData.festival : this.mapData.npcs;
     NPC_ORDER.forEach((id) => {
       const npc = this.npcs[id];
@@ -314,10 +313,8 @@ export default class TownScene extends Phaser.Scene {
 
   // ---------- helpers for the director ----------
 
-  conversationContext(id) {
-    return { location: this.currentInterior
-      ? `Inside ${this.currentInterior.name.en}. Both the player and ${NPCS[id]?.name || 'villager'} are inside this room.`
-      : `Outside ${this.festival ? 'at the fountain for the Lantern Festival' : 'on the village paths near the buildings'}. Both speakers are OUTSIDE. Nobody is inside a shop or the library.` };
+  conversationContext() {
+    return { location: `Outside ${this.festival ? 'at the fountain for the Lantern Festival' : 'on the village paths near the buildings'}. Both speakers are OUTSIDE. Buildings cannot be entered; all conversations, shopping, book requests, and quests happen outdoors.` };
   }
 
   npcSprite(id) {
@@ -357,7 +354,6 @@ export default class TownScene extends Phaser.Scene {
 
   update(time, delta) {
     const k = this.keys;
-    updateInteriors(this);
 
     this.updateNpcs(delta);
     this.updateDog(delta);
@@ -404,7 +400,7 @@ export default class TownScene extends Phaser.Scene {
     this.saveTimer -= delta;
     if (this.saveTimer <= 0) {
       this.saveTimer = 2000;
-      if (!this.currentInterior) bus.emit('player:pos', [Math.round(this.player.x), Math.round(this.player.y)]);
+      bus.emit('player:pos', [Math.round(this.player.x), Math.round(this.player.y)]);
     }
     bus.emit('player:moved', this.player);
     this.updateLabels(near);

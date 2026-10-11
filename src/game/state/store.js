@@ -41,7 +41,6 @@ function freshState(learn, help) {
     visits: {},         // npc id -> { count, last }
     backstories: {},     // Gemini-written, stable across visits and reloads
     bookmarks: [],
-    discoveries: [],
     rumors: {},         // things the whole village knows
     words: {},          // word id -> { stage, seen, used, thirsty, usedIn: [] }
     discovered: [],     // words already shown as a "guess first" card

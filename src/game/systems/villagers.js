@@ -43,6 +43,10 @@ export function offlineChat(npcId, said) {
   const me = { npc: n.name };
   const mentionsDog = usedWord(said, 'dog', s.learn) || simplify(said).includes(simplify(vars().dog));
 
+  if (/\b(inside|indoors|enter|iceri\w*|girebilir\w*|entrar|dentro)\b/.test(simplify(said))) {
+    return lineOf({ en: 'We stay outside here. You can talk to us and finish every request in the village outdoors.', tr: 'Burada dışarıda kalıyoruz. Bizimle konuşabilir ve köydeki tüm istekleri dışarıda tamamlayabilirsin.', es: 'Nos quedamos afuera. Puedes hablar con nosotros y completar todos los encargos al aire libre.' });
+  }
+
   if (/(follow me|come with me|fetch|teleport|beni takip|benimle gel|sigueme|ven conmigo|acompaname)/.test(simplify(said))) {
     return lineOf({ en: 'I need to stay here, but I can give you directions or keep you company here.', tr: 'Burada kalmam gerekiyor, ama sana yol tarif edebilir veya burada sohbet edebilirim.', es: 'Tengo que quedarme aquí, pero puedo darte indicaciones o charlar contigo aquí.' });
   }

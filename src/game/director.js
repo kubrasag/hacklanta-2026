@@ -36,7 +36,6 @@ export default class Director {
     scene.isBlocked = () => this.blocked();
 
     bus.on('interact', (id) => this.interact(id));
-    bus.on('inspect', (prop) => this.inspect(prop));
     bus.on('book:toggle', () => this.toggleBook());
     bus.on('labels:near', (id) => this.showPrompt(id));
     bus.on('player:pos', (pos) => { if (store.state) { store.state.pos = pos; store.save(); } });
@@ -163,7 +162,7 @@ export default class Director {
 
     // In the evening, villagers you pass tell you what they heard
     const s = store.state;
-    if (s.time !== 'evening' || this.blocked() || this.scene.currentInterior) return;
+    if (s.time !== 'evening' || this.blocked()) return;
     this.barkCooldown -= 16;
     if (this.barkCooldown > 0) return;
     for (const b of BARKS) {
@@ -182,22 +181,6 @@ export default class Director {
   }
 
   // ---------- talking ----------
-
-  async inspect(prop) {
-    if (this.blocked() || this.busy) return;
-    this.busy = true;
-    try {
-      const room = this.scene.currentInterior;
-      if (!room) return;
-      const key = `${room.id}:${room.props.indexOf(prop)}`;
-      if (!store.state.discoveries.includes(key)) {
-        store.state.discoveries.push(key);
-        memory.remember(room.owner, H({ en: `You discovered ${prop.name.en.toLowerCase()}.`, tr: `${prop.name.tr} hakkında bilgi edindin.`, es: `Descubriste: ${prop.name.es}.` }));
-      }
-      this.startTalk('narrator', H(prop.name));
-      await this.dialogue.say(this.line(prop.text), { voice: false });
-    } finally { this.endTalk(); this.busy = false; }
-  }
 
   async interact(id) {
     if (this.blocked() || this.busy) return;
