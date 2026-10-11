@@ -1,24 +1,18 @@
-import { Game as MainGame } from './scenes/Game';
+// main.js
+// The Phaser game. "smoothPixelArt" keeps pixels crisp at any camera zoom,
+// without the shimmering you get from nearest-neighbour scaling.
+
+import { WEBGL, Game, Scale } from 'phaser';
 import TownScene from './scenes/TownScene';
-import { AUTO, Game, Scale } from 'phaser';
 
-const config = {
-    type: AUTO,
-    width: 1024,
-    height: 768,
-    parent: 'game-container',
-    backgroundColor: '#000000',
-    pixelArt: true,
+export function startGame(parent) {
+  return new Game({
+    type: WEBGL,
+    parent,
+    backgroundColor: '#1a1410',
+    render: { smoothPixelArt: true },
     physics: { default: 'arcade', arcade: { debug: false } },
-    scale: {
-        mode: Scale.RESIZE,
-        autoCenter: Scale.CENTER_BOTH,
-    },
-    scene: [TownScene, MainGame],
-};
-
-const StartGame = (parent) => {
-    return new Game({ ...config, parent });
-};
-
-export default StartGame;
+    scale: { mode: Scale.RESIZE, width: '100%', height: '100%' },
+    scene: [TownScene],
+  });
+}

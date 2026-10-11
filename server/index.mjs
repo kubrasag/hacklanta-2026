@@ -1,6 +1,6 @@
 // server/index.mjs
-// A tiny backend that keeps our API keys secret.
-// The game (browser) talks to this server, and this server talks to ElevenLabs.
+// A small backend that keeps our API keys secret.
+// The game (browser) talks to this server, and this server talks to ElevenLabs and Gemini.
 //
 // Run it with:  npm run server
 
@@ -10,23 +10,26 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '200kb' }));
 
 const PORT = process.env.PORT || 3001;
 const ELEVEN_KEY = process.env.ELEVENLABS_API_KEY;
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 // One or more models, separated by commas. The first one is tried first, the others are backups.
-// Example in .env:  GEMINI_MODEL=gemini-3.8-flash,gemini-3.8-flash-lite
-const GEMINI_MODELS = (process.env.GEMINI_MODEL || 'gemini-3.8-flash')
+// Fast models matter more than big ones here: a villager should answer in about a second.
+// Example in .env:  GEMINI_MODEL=gemini-3.5-flash,gemini-3.5-flash-lite
+const GEMINI_MODELS = (process.env.GEMINI_MODEL || 'gemini-3.5-flash,gemini-3.5-flash-lite')
   .split(',')
   .map((m) => m.trim())
   .filter(Boolean);
 
+const LANG_CODES = new Set(['en', 'tr', 'es']);
+
 if (!ELEVEN_KEY) {
-  console.warn('⚠️  ELEVENLABS_API_KEY is missing. Add it to the .env file in the project root.');
+  console.warn('⚠️  ELEVENLABS_API_KEY is missing. Villagers will use the browser voice instead.');
 }
 if (!GEMINI_KEY) {
-  console.warn('⚠️  GEMINI_API_KEY is missing. Feedback will fall back to simple word matching.');
+  console.warn('⚠️  GEMINI_API_KEY is missing. Conversations fall back to simple word matching.');
 }
 
 // Health check: open http://localhost:3001/api/health to see if the server runs
@@ -34,9 +37,11 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, elevenlabs: Boolean(ELEVEN_KEY), gemini: Boolean(GEMINI_KEY), geminiModels: GEMINI_MODELS });
 });
 
-// Text to speech: the game sends { text, voiceId } and gets back an mp3
+// ---------- ElevenLabs: villager voices ----------
+
+// The game sends { text, voiceId, lang, speed } and gets back an mp3
 app.post('/api/tts', async (req, res) => {
-  const { text, voiceId } = req.body || {};
+  const { text, voiceId, lang, speed } = req.body || {};
 
   if (!text || !voiceId) {
     return res.status(400).json({ error: 'text and voiceId are required' });
@@ -48,6 +53,17 @@ app.post('/api/tts', async (req, res) => {
     return res.status(500).json({ error: 'ELEVENLABS_API_KEY is not set on the server' });
   }
 
+  const body = {
+    text,
+    model_id: 'eleven_flash_v2_5', // fast and cheap, speaks 32 languages
+    voice_settings: {
+      stability: 0.5,
+      similarity_boost: 0.75,
+      speed: Math.min(1.2, Math.max(0.7, Number(speed) || 1)), // 0.75 = slow replay for learners
+    },
+  };
+  if (LANG_CODES.has(lang)) body.language_code = lang; // say it with the right accent
+
   try {
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`;
     const response = await fetch(url, {
@@ -57,10 +73,7 @@ app.post('/api/tts', async (req, res) => {
         'Content-Type': 'application/json',
         Accept: 'audio/mpeg',
       },
-      body: JSON.stringify({
-        text,
-        model_id: 'eleven_flash_v2_5', // fast and cheap, good for games
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -78,7 +91,7 @@ app.post('/api/tts', async (req, res) => {
   }
 });
 
-// Speech to text: the game sends the recorded audio, we send back { text }
+// Speech to text: the game sends the recorded audio (?lang=es), we send back { text }
 app.post('/api/stt', express.raw({ type: '*/*', limit: '10mb' }), async (req, res) => {
   if (!ELEVEN_KEY) {
     return res.status(500).json({ error: 'ELEVENLABS_API_KEY is not set on the server' });
@@ -89,9 +102,11 @@ app.post('/api/stt', express.raw({ type: '*/*', limit: '10mb' }), async (req, re
 
   try {
     const type = req.headers['content-type'] || 'audio/webm';
+    const lang = LANG_CODES.has(req.query.lang) ? req.query.lang : 'en';
     const form = new FormData();
     form.append('model_id', process.env.ELEVENLABS_STT_MODEL || 'scribe_v1');
-    form.append('language_code', 'en');
+    form.append('language_code', lang);
+    form.append('tag_audio_events', 'false');
     form.append('file', new Blob([req.body], { type }), 'answer.webm');
 
     const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
@@ -114,49 +129,67 @@ app.post('/api/stt', express.raw({ type: '*/*', limit: '10mb' }), async (req, re
   }
 });
 
-// ---------- Gemini: understand the player's answer and give friendly feedback ----------
+// ---------- Gemini: villagers who understand you and help you learn ----------
 
-// The "personality" of our language coach. Players are children aged 7 to 12.
-const COACH_RULES = `
-You help children aged 7 to 12 practice speaking English in a cozy village game.
-You play a friendly NPC who runs a shop. The child talks to you out loud.
-Their words come from speech recognition, so ignore small spelling or punctuation problems.
+// How every villager behaves. The research-backed parts:
+//   meaning over grammar (task-based), prompts before answers (self-correction),
+//   recasts instead of "wrong" (natural correction), reuse of weak words (spaced retrieval).
+function coachRules(learn, help) {
+  return `
+You play a villager in WordHarvest, a cozy village game where adults practise a new language by talking.
+The player is a casual beginner (level A1) learning ${learn}. Their own language is ${help}.
+Their words come from speech recognition or typing: ignore spelling, accents, capitals and punctuation.
 
-Each conversation has a GOAL for the child. Decide if the child's LATEST message completes it.
-- goalDone is true when the meaning matches the goal, even if the grammar is not perfect.
-  "Give me bread" completes "Buy something from the bakery".
-- goalDone is false if the message is unclear, off topic, empty, or only a greeting.
+Always answer as the villager described below. Be warm, patient and encouraging. Never say "wrong".
 
-Rules for "reply" (what the NPC says next, out loud):
-- Stay in character. Simple words. One or two short sentences, at most 20 words in total.
-- Be warm and encouraging. Never say the child was wrong.
-- If goalDone is true, react naturally to what they asked (hand over the item, answer the question).
-- If goalDone is false, answer kindly and gently lead them back to the goal with a simple question.
-- If the child asks for something the shop does not have, offer something similar.
-- Never ask for personal information (name, age, school, address). If the child shares any, do not repeat it.
-- If the child says something unkind or unsafe, kindly steer back to the shop.
-
-Rules for "tip" (shown on screen to help them learn):
-- Only give a tip when their sentence was rude, very short, or had a clear grammar mistake.
-- The tip is a full, polite sentence they could say instead, for example "Could I have some bread, please?"
-- No grammar words like "verb" or "tense". Otherwise set tip to null.
-
-Rules for "praise": a very short cheer like "Great job!" or "So polite!" when goalDone is true, else null.
+Fields:
+- "reply": what the villager says out loud. ONLY ${learn}. Very simple, common words. At most 14 words.
+- "replyHelp": the same reply translated into ${help}.
+- "goalDone" (task mode only): true when the player's LATEST message reaches the GOAL in meaning.
+  Grammar mistakes are fine. Mixing in a word of ${help} is fine.
+  It is NOT done if the message is off topic, empty, or completely in ${help} instead of ${learn}.
+  In chat mode, goalDone is always false.
+- If goalDone is true: "reply" reacts naturally to exactly what they said in ONE short sentence.
+  Do not move the story forward; the game continues the story itself.
+- If goalDone is false: "reply" answers kindly in character and steers back to the goal with a simple question.
+  Never say the full answer for them.
+- "nudge" (only when the goal is not done, else null): in ${help}, max 18 words. A hint that lets the player
+  fix it themselves, pointing at the missing piece. Example: "Almost! How do you say 'please' in ${learn}?"
+  If they answered in ${help}, encourage them to try it in ${learn}. Never give the full sentence.
+- "better": only if their sentence had a clear mistake, sounded unnatural, or was in ${help}:
+  a short natural version in ${learn} (max 12 words). Otherwise null.
+- "betterHelp": "better" translated into ${help}, or null.
+- "praise": when goalDone is true, a cheer of 1 to 3 words in ${help}. Otherwise null.
+- "playerName": if the player said their own first name, just the name. Otherwise null.
+- "memory": one short fact worth remembering about the player from this message, written in ${help} and
+  addressed to the player (example: "You love chocolate."). Null if nothing new.
+  Never store sensitive details like addresses, phone numbers, age or school.
+- If REVIEW WORDS are listed, use one of them in "reply" when it fits naturally.
+- In chat mode, keep a short friendly conversation going: react, then ask one simple question back.
+- If the player is rude or unsafe, stay kind and gently change the topic back to village life.
 `;
+}
 
-const FEEDBACK_SCHEMA = {
+const CONVERSE_SCHEMA = {
   type: 'OBJECT',
   properties: {
     goalDone: { type: 'BOOLEAN' },
     reply: { type: 'STRING' },
-    tip: { type: 'STRING', nullable: true },
+    replyHelp: { type: 'STRING' },
+    nudge: { type: 'STRING', nullable: true },
+    better: { type: 'STRING', nullable: true },
+    betterHelp: { type: 'STRING', nullable: true },
     praise: { type: 'STRING', nullable: true },
+    playerName: { type: 'STRING', nullable: true },
+    memory: { type: 'STRING', nullable: true },
   },
-  required: ['goalDone', 'reply', 'tip', 'praise'],
+  required: ['goalDone', 'reply', 'replyHelp', 'nudge', 'better', 'betterHelp', 'praise', 'playerName', 'memory'],
 };
 
+const LANG_NAMES = new Set(['English', 'Turkish', 'Spanish']);
+
 // Turns Gemini's text into a safe object, even if something looks odd
-export function parseFeedback(text) {
+export function parseConverse(text) {
   let data;
   try {
     data = JSON.parse(text);
@@ -164,59 +197,81 @@ export function parseFeedback(text) {
     const m = String(text).match(/\{[\s\S]*\}/);   // sometimes the JSON is wrapped in extra text
     try { data = m ? JSON.parse(m[0]) : {}; } catch { data = {}; }
   }
-  const clean = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
+  const clean = (v, max) => (typeof v === 'string' && v.trim() && v.trim().toLowerCase() !== 'null' ? v.trim().slice(0, max) : null);
   return {
     goalDone: data.goalDone === true,
-    reply: clean(data.reply, 200) || 'Sorry, could you say that again?',
-    tip: clean(data.tip, 160),
+    reply: clean(data.reply, 220),
+    replyHelp: clean(data.replyHelp, 260),
+    nudge: clean(data.nudge, 200),
+    better: clean(data.better, 140),
+    betterHelp: clean(data.betterHelp, 180),
     praise: clean(data.praise, 40),
+    playerName: clean(data.playerName, 24),
+    memory: clean(data.memory, 120),
   };
 }
 
 // Builds the text we send to Gemini from the conversation so far
-export function buildPrompt({ npcName, goal, goalCheck, history, said }) {
-  const turns = (Array.isArray(history) ? history : []).slice(-10).map((t) => {
-    const who = t.who === 'child' ? 'Child' : 'NPC';
-    return `${who}: ${String(t.text || '').slice(0, 200)}`;
+export function buildPrompt(b) {
+  const list = (items, max) => (Array.isArray(items) ? items : []).slice(-max).map((x) => `- ${String(x).slice(0, 160)}`);
+  const turns = (Array.isArray(b.history) ? b.history : []).slice(-8).map((h) => {
+    const who = h.who === 'player' ? 'Player' : 'Villager';
+    return `${who}: ${String(h.text || '').slice(0, 200)}`;
   });
+  const mems = list(b.memories, 6);
+  const facts = list(b.villageFacts, 5);
+  const review = (Array.isArray(b.reviewWords) ? b.reviewWords : []).slice(0, 6).map((w) => String(w).slice(0, 30));
   return [
-    `NPC name: ${String(npcName || 'Shopkeeper').slice(0, 40)}`,
-    `GOAL for the child: ${String(goal || 'Talk to the NPC').slice(0, 120)}`,
-    goalCheck ? `Counts as done when: ${String(goalCheck).slice(0, 200)}` : '',
+    `Mode: ${b.mode === 'chat' ? 'chat' : 'task'}`,
+    `Villager: ${String(b.npcName || 'Villager').slice(0, 30)}. ${String(b.persona || '').slice(0, 240)}`,
+    `Player's name: ${b.playerName ? String(b.playerName).slice(0, 24) : 'unknown'}`,
+    mems.length ? `What this villager remembers about the player:\n${mems.join('\n')}` : '',
+    facts.length ? `What the whole village knows:\n${facts.join('\n')}` : '',
+    b.mode !== 'chat' && b.goal ? `GOAL for the player: ${String(b.goal).slice(0, 160)}` : '',
+    b.mode !== 'chat' && b.goalCheck ? `Counts as done when: ${String(b.goalCheck).slice(0, 240)}` : '',
+    b.mode !== 'chat' && b.model ? `Example answer (do not say it for them): ${String(b.model).slice(0, 120)}` : '',
+    review.length ? `REVIEW WORDS: ${review.join(', ')}` : '',
     '',
     'Conversation so far:',
     ...turns,
     '',
-    `Child's latest message: "${String(said).slice(0, 300)}"`,
-  ].filter((line) => line !== null).join('\n');
+    `Player's latest message: "${String(b.said).slice(0, 300)}"`,
+  ].filter((line) => line !== '').join('\n');
 }
 
-app.post('/api/feedback', async (req, res) => {
-  const { said } = req.body || {};
-  if (!said || typeof said !== 'string') {
+app.post('/api/converse', async (req, res) => {
+  const b = req.body || {};
+  if (!b.said || typeof b.said !== 'string') {
     return res.status(400).json({ error: 'said is required' });
   }
   if (!GEMINI_KEY) {
     return res.status(500).json({ error: 'GEMINI_API_KEY is not set on the server' });
   }
+  const learn = LANG_NAMES.has(b.learn) ? b.learn : 'Spanish';
+  const help = LANG_NAMES.has(b.help) ? b.help : 'English';
 
-  const body = JSON.stringify({
-    systemInstruction: { parts: [{ text: COACH_RULES }] },
-    contents: [{ role: 'user', parts: [{ text: buildPrompt(req.body) }] }],
+  // Villagers should answer fast, so we ask for little "thinking". Models that do not
+  // support the setting get the same request without it.
+  const makeBody = (fast) => JSON.stringify({
+    systemInstruction: { parts: [{ text: coachRules(learn, help) }] },
+    contents: [{ role: 'user', parts: [{ text: buildPrompt(b) }] }],
     generationConfig: {
-      temperature: 0.6,
+      temperature: 0.7,
       responseMimeType: 'application/json',
-      responseSchema: FEEDBACK_SCHEMA,
+      responseSchema: CONVERSE_SCHEMA,
+      ...(fast ? { thinkingConfig: { thinkingLevel: 'low' } } : {}),
     },
   });
 
   try {
-    const result = await callGemini(body);
+    const result = await callGemini(makeBody);
     if (!result.ok) {
       return res.status(502).json({ error: 'Gemini request failed', detail: result.detail });
     }
     const text = result.data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '{}';
-    res.json({ ...parseFeedback(text), model: result.model });
+    const out = parseConverse(text);
+    if (b.mode === 'chat') out.goalDone = false;
+    res.json({ ...out, model: result.model });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Could not reach Gemini' });
@@ -227,13 +282,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const BUSY = new Set([429, 500, 503]);   // "too many requests" or "overloaded": worth trying again
 
 // Tries each model in GEMINI_MODELS. Busy models get 2 quick retries before we move to the next one.
-// Everything must finish within ~8 seconds, so a child never waits too long.
-async function callGemini(body) {
+// Everything must finish within ~8 seconds, so a player never waits too long.
+// makeBody(fast) builds the request; fast = with little thinking.
+// One slow model may use at most 4.5 seconds, so a backup model still has time to answer.
+async function callGemini(makeBody) {
   const deadline = Date.now() + 8000;
   let lastDetail = '';
 
   for (const model of GEMINI_MODELS) {
+    let fast = true;
     for (let attempt = 0; attempt < 3; attempt++) {
+      const body = makeBody(fast);
       const timeLeft = deadline - Date.now();
       if (timeLeft < 500) return { ok: false, detail: 'Timed out. ' + lastDetail };
 
@@ -245,7 +304,7 @@ async function callGemini(body) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
             body,
-            signal: AbortSignal.timeout(timeLeft),
+            signal: AbortSignal.timeout(Math.min(timeLeft, 4500)),
           },
         );
       } catch (err) {
@@ -260,6 +319,10 @@ async function callGemini(body) {
 
       lastDetail = `${model} ${response.status}: ${(await response.text()).slice(0, 300)}`;
       console.warn('Gemini error', lastDetail);
+      if (response.status === 400 && fast && /thinking/i.test(lastDetail)) {
+        fast = false;   // this model does not know the thinking setting: ask again without it
+        continue;
+      }
       if (!BUSY.has(response.status)) break;   // wrong model name or key: retrying will not help
       if (attempt < 2) await sleep(400 * (attempt + 1));   // wait 0.4s, then 0.8s
     }
@@ -287,9 +350,10 @@ app.get('/api/voices', async (req, res) => {
   }
 });
 
+// The built game (npm run build) is served from here too, so one command runs everything
 const distDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 app.use(express.static(distDir));
 
 app.listen(PORT, () => {
-  console.log(`🔊 SpeakQuest server running on http://localhost:${PORT}`);
+  console.log(`🌾 WordHarvest server running on http://localhost:${PORT}`);
 });
