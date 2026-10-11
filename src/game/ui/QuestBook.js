@@ -14,6 +14,7 @@ import { NPCS, NPC_ORDER } from '../data/npcs';
 import { quests, levelProgress } from '../systems/quests';
 import { garden, STAGE_ICONS } from '../systems/garden';
 import { memory } from '../systems/memory';
+import { momentOf } from '../systems/villagers';
 import { speak } from '../audio/voice';
 import { sfx } from '../audio/sfx';
 
@@ -21,6 +22,7 @@ const TABS = [
   { id: 'quests', icon: '📜', label: 'tabQuests' },
   { id: 'garden', icon: '🌱', label: 'tabGarden' },
   { id: 'villagers', icon: '🏡', label: 'tabVillagers' },
+  { id: 'bookmarks', icon: '🔖', label: 'tabBookmarks' },
 ];
 
 export default class QuestBook {
@@ -46,6 +48,7 @@ export default class QuestBook {
       if (e.code === 'Digit1') this.show('quests');
       if (e.code === 'Digit2') this.show('garden');
       if (e.code === 'Digit3') this.show('villagers');
+      if (e.code === 'Digit4') this.show('bookmarks');
     });
   }
 
@@ -83,6 +86,21 @@ export default class QuestBook {
     if (tab === 'quests') this.renderQuests();
     if (tab === 'garden') this.renderGarden();
     if (tab === 'villagers') this.renderVillagers();
+    if (tab === 'bookmarks') this.renderBookmarks();
+  }
+
+  renderBookmarks() {
+    this.left.append(el('h2', '', `🔖 ${t('tabBookmarks')}`), el('p', 'sub', t('bookmarkHelp')));
+    if (!store.state.bookmarks.length) this.right.append(el('p', 'sub', t('emptyBookmarks')));
+    for (const b of store.state.bookmarks) {
+      const listen = el('button', 'btn small paper', '🔊');
+      listen.setAttribute('aria-label', t('replay'));
+      listen.onclick = () => speak(b.text, { voiceId: NPCS.leo.voiceId, lang: b.from });
+      const remove = el('button', 'btn small paper', '✕');
+      remove.setAttribute('aria-label', t('removeBookmark'));
+      remove.onclick = () => { store.state.bookmarks = store.state.bookmarks.filter((x) => x !== b); store.saveNow(); this.show('bookmarks'); };
+      this.right.append(el('div', 'bookmark-card', [el('strong', '', b.text), el('p', '', b.translation), listen, remove]));
+    }
   }
 
   // ================= quests =================
@@ -222,10 +240,23 @@ export default class QuestBook {
         el('div', 'who', n.name),
         el('div', 'role', H(n.role)),
         el('div', 'hearts', '♥'.repeat(full) + '♡'.repeat(5 - full)),
+        el('div', 'role', `💬 ${t('talksCount', { n: memory.visitCount(id) })}`),
       ]),
     ]));
+    this.right.append(
+      el('h4', '', `📖 ${t('theirStory')}`),
+      el('p', 'sub', s.backstories?.[id] || H(n.about)),
+      el('h4', '', `🕐 ${t('rightNow')}`),
+      el('p', 'sub', `“${H(momentOf(id).line)}”`),
+    );
     this.right.append(el('h4', '', `💭 ${t('remembers')}`));
     if (!mems.length) this.right.append(el('div', 'sub', t('nothingYet')));
     else this.right.append(el('ul', 'objs', mems.map((m) => el('li', '', [el('span', 'box', '💭'), m]))));
+    const last = memory.lastTalk(id);
+    if (last.length) {
+      this.right.append(el('h4', '', `💬 ${t('lastTalk')}`), el('div', 'talklog', last.map((l) => el('div', `tl-${l.who}`, [
+        el('b', '', `${l.who === 'player' ? t('you') : n.name}: `), l.text,
+      ]))));
+    }
   }
 }

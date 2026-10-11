@@ -66,7 +66,7 @@ export const WORDS = {
     icon: '🐶',
     text: { en: 'dog', tr: 'köpek', es: 'perro' },
     forms: { en: ['dogs', 'dog'], tr: ['köpekler', 'köpeğin', 'köpeğim', 'köpeği', 'köpek'], es: ['perros', 'perrito', 'perro'] },
-    say: { en: ['dog*', 'puppy'], tr: ['kopek*'], es: ['perr*'] },
+    say: { en: ['dog*', 'puppy'], tr: ['kopek*', 'kopeg*'], es: ['perr*'] },
   },
   small: {
     icon: '🤏',

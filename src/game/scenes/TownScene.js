@@ -11,6 +11,7 @@ import { bus } from '../core/bus';
 import { NPCS, NPC_ORDER } from '../data/npcs';
 import { typing } from '../ui/dom';
 import { sfx } from '../audio/sfx';
+import { installInteriors, updateInteriors, fitInteriorCamera } from './interiorWorld';
 
 const DIRS = { down: 0, left: 4, right: 8, up: 12 };
 const CHAR_TEXTURES = ['player', 'guide', 'baker', 'barista', 'grocer', 'librarian'];
@@ -151,6 +152,7 @@ export default class TownScene extends Phaser.Scene {
     this.stepTimer = 0;
     this.saveTimer = 0;
 
+    installInteriors(this);
     bus.emit('scene:ready', this);
   }
 
@@ -217,6 +219,7 @@ export default class TownScene extends Phaser.Scene {
     const { width, height } = this.scale.gameSize;
     const zoom = Phaser.Math.Clamp(Math.min(width / 700, height / 440), 1.5, 3.2);
     this.cameras.main.setZoom(Math.round(zoom * 4) / 4);
+    if (this.currentInterior) fitInteriorCamera(this);
   }
 
   // ---------- title tour and starting to play ----------
@@ -270,6 +273,7 @@ export default class TownScene extends Phaser.Scene {
 
   // In the evening everyone gathers at the fountain
   placeNpcs(festival) {
+    if (this.currentInterior) { this.pendingFestival = festival; return; }
     const spots = festival ? this.mapData.festival : this.mapData.npcs;
     NPC_ORDER.forEach((id) => {
       const npc = this.npcs[id];
@@ -310,9 +314,15 @@ export default class TownScene extends Phaser.Scene {
 
   // ---------- helpers for the director ----------
 
+  conversationContext(id) {
+    return { location: this.currentInterior
+      ? `Inside ${this.currentInterior.name.en}. Both the player and ${NPCS[id]?.name || 'villager'} are inside this room.`
+      : `Outside ${this.festival ? 'at the fountain for the Lantern Festival' : 'on the village paths near the buildings'}. Both speakers are OUTSIDE. Nobody is inside a shop or the library.` };
+  }
+
   npcSprite(id) {
     if (id === 'biscuit') return this.dog.visible ? this.dog : null;
-    return this.npcs[id] || null;
+    return this.npcs[id]?.visible ? this.npcs[id] : null;
   }
 
   faceEachOther(id) {
@@ -347,6 +357,7 @@ export default class TownScene extends Phaser.Scene {
 
   update(time, delta) {
     const k = this.keys;
+    updateInteriors(this);
 
     this.updateNpcs(delta);
     this.updateDog(delta);
@@ -393,7 +404,7 @@ export default class TownScene extends Phaser.Scene {
     this.saveTimer -= delta;
     if (this.saveTimer <= 0) {
       this.saveTimer = 2000;
-      bus.emit('player:pos', [Math.round(this.player.x), Math.round(this.player.y)]);
+      if (!this.currentInterior) bus.emit('player:pos', [Math.round(this.player.x), Math.round(this.player.y)]);
     }
     bus.emit('player:moved', this.player);
     this.updateLabels(near);
@@ -472,7 +483,7 @@ export default class TownScene extends Phaser.Scene {
     g.fillStyle(0x000000, 0.22);
     const all = [...NPC_ORDER.map((id) => this.npcs[id])];
     if (this.player.visible) all.push(this.player);
-    all.forEach((s) => { if (s.alpha > 0.5) g.fillEllipse(s.x, s.y - 1, 26, 8); });
+    all.forEach((s) => { if (s.visible && s.alpha > 0.5) g.fillEllipse(s.x, s.y - 1, 26, 8); });
     if (this.dog.visible) g.fillEllipse(this.dog.x, this.dog.y - 1, 28, 7);
   }
 

@@ -1,5 +1,6 @@
 // portraits.js
 // Pixel portraits for menus, cut from the character sprite sheets (front-facing frame).
+// Faces are drawn at a whole-number zoom (1x, 2x, 3x), so every pixel stays sharp.
 
 import { NPCS } from '../data/npcs';
 
@@ -14,10 +15,11 @@ function image(texture) {
   return images.get(texture);
 }
 
-// Where the face is inside each sheet: [x, y, size]
-const CROPS = {
-  character: [6, 2, 40],
-  dog: [18, 0, 22],
+// Where the face is in each sheet: center x, center y, and the size of a "close-up"
+const FACES = {
+  character: { cx: 26, cy: 24, crop: 40 },
+  player: { cx: 26, cy: 24, crop: 30 },
+  dog: { cx: 29, cy: 9, crop: 20 },
 };
 
 export function textureOf(who) {
@@ -32,13 +34,17 @@ export function portrait(who, size = 80) {
   canvas.width = size;
   canvas.height = size;
   const texture = textureOf(who);
-  const [sx, sy, s] = texture === 'dog' ? CROPS.dog : CROPS.character;
+  const face = FACES[texture] || FACES.character;
+  const zoom = Math.max(1, Math.round(size / face.crop));
+  const crop = face.crop;
+  canvas.width = crop * zoom;
+  canvas.height = crop * zoom;
   const img = image(texture);
   const draw = () => {
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, size, size);
-    ctx.drawImage(img, sx, sy, s, s, 0, 0, size, size);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, face.cx - crop / 2, face.cy - crop / 2, crop, crop, 0, 0, canvas.width, canvas.height);
   };
   if (img.complete && img.naturalWidth) draw();
   else img.addEventListener('load', draw, { once: true });

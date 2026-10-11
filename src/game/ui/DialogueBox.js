@@ -21,6 +21,7 @@ import { speak, stopVoice, prefetch } from '../audio/voice';
 import { startRecording, stopRecording, isRecording, speechMode } from '../audio/mic';
 import { sfx, unlockAudio } from '../audio/sfx';
 import { escapeHtml, shuffle } from '../core/text';
+import TranslationPopup, { translatable } from './TranslationPopup';
 
 const TYPE_SPEED = 22; // ms per letter
 
@@ -88,11 +89,13 @@ export default class DialogueBox {
     root.appendChild(this.tip);
 
     this.bindEvents();
+    this.translationPopup = new TranslationPopup(root, this);
   }
 
   // ================= opening and closing =================
 
   open(who, { name, hearts = null } = {}) {
+    this.session = (this.session || 0) + 1;
     unlockAudio();
     this.who = who;
     this.voiceId = NPCS[who]?.voiceId || null;
@@ -115,6 +118,7 @@ export default class DialogueBox {
 
   close() {
     if (!this.isOpen) return;
+    this.session += 1;
     stopVoice();
     if (isRecording()) stopRecording().catch(() => {});
     clearInterval(this.typingTimer);
@@ -122,6 +126,7 @@ export default class DialogueBox {
     this.isOpen = false;
     this.root.classList.remove('open');
     this.tip.style.display = 'none';
+    this.translationPopup.hide();
     this.input.blur();
     this.closedAt = performance.now();   // so the same E press does not open a new talk
     this.finish(null);
@@ -168,6 +173,7 @@ export default class DialogueBox {
   async say({ text, help }, { voice = true } = {}) {
     if (!this.isOpen) return null;
     this.history.push({ who: 'npc', text });
+    this.onHistory?.();
     this.showLine(text, help, voice);
     this.setFoot(true);
     const ok = await this.wait('continue');
@@ -180,6 +186,7 @@ export default class DialogueBox {
     clearInterval(this.typingTimer);
     this.typingTimer = null;
     this.lineEl.innerHTML = `<i>${escapeHtml(text)}</i>`;
+    translatable(this.lineEl, text, null, store.state.help);
     this.transEl.style.display = 'none';
     this.toolsEl.style.display = 'none';
     this.setFoot(true);
@@ -187,6 +194,9 @@ export default class DialogueBox {
   }
 
   showLine(text, help, voice = true) {
+    this.translationPopup.hide();
+    translatable(this.lineEl, text, help);
+    translatable(this.transText, help || '', text, store.state.help);
     this.currentLine = text;
     this.transText.textContent = help || '';
     this.transEl.classList.remove('shown');
@@ -291,7 +301,7 @@ export default class DialogueBox {
     this.hideTurn();
     const opts = el('div', 'options');
     const reveal = el('div', 'reveal');
-    const target = el('span', 'target', word.text[s.learn]);
+    const target = translatable(el('span', 'target', word.text[s.learn]), word.text[s.learn], word.text[s.help]);
     this.showCard([el('h3', '', [`🌱 ${t('discoverTitle')}`, target]), opts, reveal]);
     this.setFoot(false);
     sfx.chime();
@@ -372,7 +382,8 @@ export default class DialogueBox {
     this.mode = 'chat';
     this.busy = false;
     this.setGoal('');
-    this.turnTitle.textContent = t('chatPrompt', { npc: this.nameplate.textContent, lang: langName(store.state.learn) });
+    const words = { npc: this.nameplate.textContent, lang: langName(store.state.learn) };
+    this.turnTitle.textContent = t(spec.afterQuest ? 'chatPromptAfter' : 'chatPrompt', words);
     this.starsLive.textContent = '';
     this.hint1Btn.style.display = 'none';
     this.hint2Btn.style.display = 'none';
@@ -380,6 +391,19 @@ export default class DialogueBox {
     clear(this.modelBox).classList.remove('open');
     this.saidEl.classList.remove('open');
     this.coachEl.classList.remove('open');
+    // Ideas for beginners: tap one to hear it, then say it (or press Send)
+    if (spec.ideas && spec.ideas.length) {
+      this.hintBox.appendChild(el('span', 'lbl', `💡 ${t('ideas')}:`));
+      spec.ideas.forEach((idea) => {
+        const chip = translatable(el('span', 'chip', [`${idea.icon} ${idea.text}`, el('span', 'meaning', idea.help)]), idea.text, idea.help);
+        chip.onclick = () => {
+          this.input.value = idea.text;
+          speak(idea.text, { voiceId: this.wordVoice, lang: store.state.learn, slow: true });
+        };
+        this.hintBox.appendChild(chip);
+      });
+      this.hintBox.classList.add('open');
+    }
     this.showTurn();
     this.setFoot(true);
     return this.wait('chat');
@@ -432,7 +456,7 @@ export default class DialogueBox {
       const slow = el('button', 'btn small paper', '🐢');
       listen.onclick = () => speak(spec.model, { voiceId: this.wordVoice, lang: s.learn });
       slow.onclick = () => speak(spec.model, { voiceId: this.wordVoice, lang: s.learn, slow: true });
-      this.modelBox.append(el('span', '', `📜 ${spec.model}`), listen, slow, el('span', 'meaning', spec.modelHelp || ''));
+      this.modelBox.append(translatable(el('span', '', `📜 ${spec.model}`), spec.model, spec.modelHelp), listen, slow, el('span', 'meaning', spec.modelHelp || ''));
       this.modelBox.classList.add('open');
       this.hint2Btn.disabled = true;
       this.hint1Btn.disabled = true;
@@ -503,23 +527,28 @@ export default class DialogueBox {
 
   async attempt(said, spoken) {
     const spec = this.spec;
+    const session = this.session;
     this.busy = true;
     this.setMic('thinking');
     this.history.push({ who: 'player', text: said });
+    this.onHistory?.();
     this.showSaid(said, null, spoken);
     let fb;
     try {
       fb = await spec.onAttempt(said, spoken, { hintLevel: this.hintLevel || 0, attempts: this.attempts || 0 });
     } finally {
-      this.busy = false;
-      this.setMic('idle');
+      if (session === this.session) {
+        this.busy = false;
+        this.setMic('idle');
+      }
     }
-    if (!this.isTurn() || !fb) return;
+    if (session !== this.session || !this.isTurn() || !fb) return;
     this.showSaid(said, null, spoken, fb.used || []);
 
     if (this.mode === 'chat') {
       if (fb.reply) {
         this.history.push({ who: 'npc', text: fb.reply });
+        this.onHistory?.();
         this.showLine(fb.reply, fb.replyHelp);
       }
       this.showCoach(null, fb.better, fb.betterHelp);
@@ -539,6 +568,7 @@ export default class DialogueBox {
     sfx.soft();
     if (fb.reply) {
       this.history.push({ who: 'npc', text: fb.reply });
+      this.onHistory?.();
       this.showLine(fb.reply, fb.replyHelp);
     }
     this.showCoach(fb.nudge, fb.better, fb.betterHelp);
@@ -552,7 +582,7 @@ export default class DialogueBox {
       this.saidEl.append(el('span', '', `⚠️ ${warning}`));
     } else {
       const label = spoken ? `🎤 ${t('youSaid')}:` : `⌨️ ${t('youTyped')}:`;
-      this.saidEl.append(label, ' ', el('q', '', said));
+      this.saidEl.append(label, ' ', translatable(el('q', '', said), said));
       if (used.length) {
         const s = store.state;
         this.saidEl.append('  ', el('span', '', `· ${t('heard')}: `));
@@ -575,7 +605,7 @@ export default class DialogueBox {
     if (better) {
       const listen = el('button', 'btn small paper', '🔊');
       listen.onclick = () => speak(better, { voiceId: this.wordVoice, lang: store.state.learn });
-      body.append(el('div', 'bt', `✨ ${t('betterSay')}:`), el('span', 'better', [better, ' ', listen]));
+      body.append(el('div', 'bt', `✨ ${t('betterSay')}:`), translatable(el('span', 'better', [better, ' ', listen]), better, betterHelp));
       if (betterHelp) body.append(el('div', 'bt', betterHelp));
     }
     this.coachEl.append(el('span', 'ic', nudge ? '💬' : '✨'), body);
@@ -673,7 +703,7 @@ export default class DialogueBox {
       const listen = el('button', 'btn small paper', '🔊');
       listen.onclick = () => speak(summary.better, { voiceId: this.wordVoice, lang: s.learn });
       parts.push(el('div', 'coach open', [el('span', 'ic', '✨'), el('div', '', [
-        el('div', 'bt', `${t('betterSay')}:`), el('span', 'better', [summary.better, ' ', listen]),
+        el('div', 'bt', `${t('betterSay')}:`), translatable(el('span', 'better', [summary.better, ' ', listen]), summary.better, summary.betterHelp),
         summary.betterHelp ? el('div', 'bt', summary.betterHelp) : null,
       ])]));
     }
@@ -712,20 +742,6 @@ export default class DialogueBox {
     this.micBtn.addEventListener('touchend', up, { passive: false });
 
     this.lineEl.addEventListener('click', () => this.advance());
-    this.lineEl.addEventListener('mouseover', (e) => {
-      const g = e.target.closest('.gloss');
-      if (!g) return;
-      const w = WORDS[g.dataset.word];
-      const s = store.state;
-      const r = g.getBoundingClientRect();
-      this.tip.textContent = `${w.icon} ${w.text[s.learn]} = ${w.text[s.help]}`;
-      this.tip.style.left = `${r.left + r.width / 2}px`;
-      this.tip.style.top = `${r.top}px`;
-      this.tip.style.display = 'block';
-    });
-    this.lineEl.addEventListener('mouseout', (e) => {
-      if (e.target.closest('.gloss')) this.tip.style.display = 'none';
-    });
 
     window.addEventListener('keydown', (e) => {
       if (!this.isOpen || typing() || performance.now() - this.openedAt < 120) return;

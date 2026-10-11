@@ -330,7 +330,7 @@ export const QUESTS = {
         npc: 'lily',
         objective: { en: 'Ask Lily for a book', tr: 'Lily’den bir kitap iste', es: 'Pídele un libro a Lily' },
         intro: [
-          { en: 'Welcome to the library. Can I help you?', tr: 'Kütüphaneye hoş geldin. Yardım edebilir miyim?', es: 'Bienvenida a la biblioteca. ¿Te puedo ayudar?' },
+          { en: 'Hello! Would you like a book recommendation?', tr: 'Merhaba! Bir kitap önerisi ister misin?', es: '¡Hola! ¿Quieres que te recomiende un libro?' },
         ],
         task: {
           goal: { en: 'Ask for a book about dogs.', tr: 'Köpekler hakkında bir kitap iste.', es: 'Pide un libro sobre perros.' },
@@ -360,32 +360,7 @@ export const ITEMS = {
   book: { icon: '📕', text: { en: 'Dog book', tr: 'Köpek kitabı', es: 'Libro de perros' } },
 };
 
-// What villagers say when they have no quest for you. The first line whose "when" is true wins.
-// "s" is the save state. This is where memory shows: they remember what you did.
-export const SMALLTALK = {
-  leo: [
-    { when: (s) => s.time === 'evening', line: { en: 'What a beautiful night, {name}!', tr: 'Ne güzel bir gece, {name}!', es: '¡Qué noche tan bonita, {name}!' } },
-    { when: (s) => s.rumors.dogFound, line: { en: 'Everyone is talking about you and {dog}!', tr: 'Herkes senden ve {dog} adlı köpekten bahsediyor!', es: '¡Todo el mundo habla de ti y de {dog}!' } },
-    { when: (s) => s.quests.q2?.status === 'done', line: { en: 'Did you like the croissant, {name}?', tr: 'Kruvasanı beğendin mi, {name}?', es: '¿Te gustó el cruasán, {name}?' } },
-    { when: () => true, line: { en: "Tom's bakery has a red roof. Go up the road!", tr: 'Tom’un fırınının kırmızı bir çatısı var. Yoldan yukarı çık!', es: 'La panadería de Tom tiene el techo rojo. ¡Sube por el camino!' } },
-  ],
-  tom: [
-    { when: (s) => s.quests.q2?.status === 'done', line: { en: 'Welcome back, {name}! Another croissant?', tr: 'Tekrar hoş geldin, {name}! Bir kruvasan daha?', es: '¡Bienvenida otra vez, {name}! ¿Otro cruasán?' } },
-    { when: () => true, line: { en: 'Hello! Are you new here? Go and see Leo at the fountain!', tr: 'Merhaba! Yeni misin? Çeşmedeki Leo’ya git!', es: '¡Hola! ¿Eres nueva? ¡Ve a ver a Leo en la fuente!' } },
-  ],
-  mia: [
-    { when: (s) => s.rumors.dogFound, line: { en: '{dog} is so happy today. Thank you, {name}!', tr: '{dog} bugün çok mutlu. Teşekkürler, {name}!', es: '{dog} está muy feliz hoy. ¡Gracias, {name}!' } },
-    { when: () => true, line: { en: "Hi! Sorry, I'm very busy right now.", tr: 'Merhaba! Kusura bakma, şu an çok meşgulüm.', es: '¡Hola! Perdona, ahora estoy muy ocupada.' } },
-  ],
-  sam: [
-    { when: (s) => s.quests.r1?.status === 'done', line: { en: 'Back again, {name}? The apples are still fresh!', tr: 'Yine mi geldin, {name}? Elmalar hâlâ taze!', es: '¿Otra vez por aquí, {name}? ¡Las manzanas siguen frescas!' } },
-    { when: () => true, line: { en: 'Hello there! Have you met Leo yet?', tr: 'Merhaba! Leo ile tanıştın mı?', es: '¡Hola! ¿Ya conoces a Leo?' } },
-  ],
-  lily: [
-    { when: (s) => s.quests.r2?.status === 'done', line: { en: 'How is the dog book, {name}?', tr: 'Köpek kitabı nasıl, {name}?', es: '¿Qué tal el libro de perros, {name}?' } },
-    { when: () => true, line: { en: 'Shh... this is the library. Welcome!', tr: 'Şşş... burası kütüphane. Hoş geldin!', es: 'Shh... esto es la biblioteca. ¡Bienvenida!' } },
-  ],
-};
+// What villagers say outside quests lives in life.js (MOMENTS).
 
 // Speech bubbles in the evening: the village heard what you did.
 export const BARKS = [
@@ -401,12 +376,6 @@ export const BARKS = [
 export const RETRY_LINES = [
   { en: 'Sorry, can you say that again?', tr: 'Pardon, tekrar söyler misin?', es: 'Perdona, ¿puedes repetirlo?' },
   { en: 'Hmm, I did not understand. One more time?', tr: 'Hımm, anlamadım. Bir kez daha?', es: 'Mmm, no entendí. ¿Otra vez?' },
-];
-
-// Small replies in free chat when Gemini is not available
-export const CHAT_FALLBACK = [
-  { en: 'Ha ha, nice!', tr: 'Ha ha, güzel!', es: '¡Ja, ja, qué bien!' },
-  { en: 'Really? How interesting!', tr: 'Gerçekten mi? Ne ilginç!', es: '¿De verdad? ¡Qué interesante!' },
 ];
 
 export const DOG_HAPPY = { en: 'Woof! Woof!', tr: 'Hav hav!', es: '¡Guau, guau!' };

@@ -37,6 +37,11 @@ function freshState(learn, help) {
     items: {},          // item id -> count
     hearts,             // npc id -> 0..10
     memories,           // npc id -> [text in help language]
+    chats: {},          // npc id -> last lines said to each other, across visits
+    visits: {},         // npc id -> { count, last }
+    backstories: {},     // Gemini-written, stable across visits and reloads
+    bookmarks: [],
+    discoveries: [],
     rumors: {},         // things the whole village knows
     words: {},          // word id -> { stage, seen, used, thirsty, usedIn: [] }
     discovered: [],     // words already shown as a "guess first" card

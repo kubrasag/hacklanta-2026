@@ -81,6 +81,7 @@ export default class TitleScreen {
     card.append(el('div', 'howto', [
       el('span', '', [el('span', 'kbd', 'WASD'), t('howMove')]),
       el('span', '', [el('span', 'kbd', 'E'), t('howTalk')]),
+      el('span', '', [el('span', 'kbd', 'F'), t('howEnter')]),
       el('span', '', [el('span', 'kbd', 'SPACE'), t('howSpeak')]),
       el('span', '', [el('span', 'kbd', 'T'), t('howTranslate')]),
       el('span', '', [el('span', 'kbd', 'Q'), t('howBook')]),

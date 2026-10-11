@@ -16,11 +16,12 @@
 import { store, L, H, vars } from '../state/store';
 import { WORDS, usedWord } from '../data/words';
 import { NPCS } from '../data/npcs';
-import { RETRY_LINES, CHAT_FALLBACK } from '../data/story';
+import { RETRY_LINES } from '../data/story';
 import { LANGUAGES } from '../data/languages';
 import { simplify, capitalize } from '../core/text';
 import { memory } from '../systems/memory';
 import { garden } from '../systems/garden';
+import { offlineChat, situationOf, profileOf } from '../systems/villagers';
 import { t } from '../data/i18n';
 
 let aiAvailable = true;
@@ -67,11 +68,11 @@ function localNudge(task, said) {
   return t('nudgeTry', { word: w.text[lang], meaning: w.text[store.state.help] });
 }
 
-function offline({ mode, task, said }) {
+function offline({ mode, task, said, npcId }) {
   const s = store.state;
   if (mode === 'chat') {
-    const line = CHAT_FALLBACK[retryIndex++ % CHAT_FALLBACK.length];
-    return { goalDone: false, reply: L(line), replyHelp: H(line), source: 'local' };
+    const r = offlineChat(npcId, said);
+    return { goalDone: false, reply: r.reply, replyHelp: r.replyHelp, playerName: findName(said, s.learn), source: 'local' };
   }
   const done = localCheck(task, said);
   const retry = RETRY_LINES[retryIndex++ % RETRY_LINES.length];
@@ -88,9 +89,9 @@ function offline({ mode, task, said }) {
 }
 
 // lenient = the player already tried twice or used a hint: then a clear word match is enough
-export async function converse({ mode = 'task', npcId, task, history, said, localOnly = false, lenient = false }) {
+export async function converse({ mode = 'task', npcId, task, history, said, context = {}, localOnly = false, lenient = false }) {
   const s = store.state;
-  const local = offline({ mode, task, said });
+  const local = offline({ mode, task, said, npcId });
   // Every word the village teaches counts, so reusing an old word later makes it bloom
   const used = wordsUsed(said, Object.keys(WORDS));
   if (!aiAvailable || localOnly) return { ...local, used };
@@ -101,15 +102,22 @@ export async function converse({ mode = 'task', npcId, task, history, said, loca
     learn: LANGUAGES[s.learn].name,
     help: LANGUAGES[s.help].name,
     npcName: npc ? npc.name : 'Biscuit',
-    persona: npc ? npc.persona : 'A small brown dog.',
+    persona: npc ? profileOf(npcId) : 'A small brown dog.',
+    situation: npc ? situationOf(npcId) : '',
     playerName: s.playerName,
     memories: npc ? memory.of(npcId) : [],
+    earlier: npc ? memory.earlier(npcId, context.session) : [],
+    visits: npc ? memory.visitCount(npcId, context.session) : 0,
+    lastVisit: npc ? memory.lastVisit(npcId, context.session) : null,
+    timeOfDay: s.time,
+    location: context.location || 'Outside in the village, not inside a building.',
+    worldState: { dog: s.dog, quests: s.quests, items: s.items },
     villageFacts: memory.villageFacts(),
     reviewWords: garden.thirsty().map((id) => WORDS[id].text[s.learn]),
     goal: task ? task.goal.en : null,
     goalCheck: task ? task.check : null,
     model: task ? L(task.model) : null,
-    history: history.slice(-8),
+    history: history.slice(-20),
     said,
   };
 
@@ -118,6 +126,7 @@ export async function converse({ mode = 'task', npcId, task, history, said, loca
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) throw new Error(`converse ${res.status}`);
     const ai = await res.json();

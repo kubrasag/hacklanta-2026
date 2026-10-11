@@ -10,7 +10,7 @@ Writes: public/assets/town/town.png        the village, crisp 2px pixels
         public/assets/town/town_fg.png     things you can walk behind (atlas)
         public/assets/town/town_fg.json    atlas frames (Phaser JSON hash)
         public/assets/town/town_map.json   walls, foreground objects, spawn, NPC spots
-        public/assets/characters/*.png     character sheets on the same 2px grid
+        public/assets/characters/*.png     character sheets (full 1px detail, hard edges)
         public/assets/characters/dog.png   Biscuit the dog (drawn here, pixel by pixel)
 """
 
@@ -194,13 +194,38 @@ def pack_atlas(pieces, width=2048):
 
 # ---------- 4. Characters ----------
 
-def pixelate_sheet(path):
+def clean_sheet(path):
+    """Characters keep their full 1px detail (faces need it). We only make edges hard,
+    so they stay crisp next to the 2px village."""
     sheet = Image.open(path).convert('RGBA')
-    w, h = sheet.size
-    small = sheet.resize((w // K, h // K), Image.NEAREST)
-    a = np.asarray(small).copy()
+    a = np.asarray(sheet).copy()
     a[..., 3] = np.where(a[..., 3] >= 128, 255, 0)
-    return Image.fromarray(a, 'RGBA').resize((w, h), Image.NEAREST)
+    return Image.fromarray(a, 'RGBA')
+
+
+def scale2x(img):
+    """Scale2x (EPX): doubles pixel art and smooths diagonal steps, so a small
+    sprite gets 1px detail like the characters instead of chunky 2px blocks."""
+    src = np.asarray(img)
+    h, w = src.shape[:2]
+    pad = np.pad(src, ((1, 1), (1, 1), (0, 0)), mode='edge')
+    out = np.zeros((h * 2, w * 2, 4), dtype=src.dtype)
+    eq = lambda a, b: np.all(a == b, axis=-1)
+    P = pad[1:-1, 1:-1]
+    A = pad[:-2, 1:-1]   # up
+    B = pad[1:-1, 2:]    # right
+    C = pad[1:-1, :-2]   # left
+    D = pad[2:, 1:-1]    # down
+    keep = eq(C, B) | eq(A, D)
+    e0 = np.where((eq(C, A) & ~keep)[..., None], A, P)
+    e1 = np.where((eq(A, B) & ~keep)[..., None], B, P)
+    e2 = np.where((eq(D, C) & ~keep)[..., None], C, P)
+    e3 = np.where((eq(B, D) & ~keep)[..., None], D, P)
+    out[0::2, 0::2] = e0
+    out[0::2, 1::2] = e1
+    out[1::2, 0::2] = e2
+    out[1::2, 1::2] = e3
+    return Image.fromarray(out, 'RGBA')
 
 
 # Biscuit the dog, side view facing right. 20x16 art pixels per frame.
@@ -259,7 +284,7 @@ def draw_dog():
             for x, ch in enumerate(row):
                 if ch in DOG_PAL:
                     px[x, y] = DOG_PAL[ch]
-        big = frame.resize((fw * 2, fh * 2), Image.NEAREST)
+        big = scale2x(frame)
         sheet.paste(big, (i * fw * 2, 0))                                   # facing right
         sheet.paste(big.transpose(Image.FLIP_LEFT_RIGHT), (i * fw * 2, fh * 2))  # facing left
     return sheet
@@ -314,7 +339,7 @@ def main():
     (OUT_TOWN / 'town_map.json').write_text(json.dumps(town_map, separators=(',', ':')), encoding='utf-8')
 
     for name in CHARACTERS:
-        pixelate_sheet(SRC / f'{name}.png').save(OUT_CHAR / f'{name}.png', optimize=True)
+        clean_sheet(SRC / f'{name}.png').save(OUT_CHAR / f'{name}.png', optimize=True)
     draw_dog().save(OUT_CHAR / 'dog.png', optimize=True)
     print('characters done')
 

@@ -10,7 +10,10 @@ import { store, L, H, vars } from './state/store';
 import { t } from './data/i18n';
 import { NPCS, NPC_ORDER } from './data/npcs';
 import { WORDS } from './data/words';
-import { QUESTS, SMALLTALK, BARKS, DOG_HAPPY, ITEMS } from './data/story';
+import { QUESTS, BARKS, DOG_HAPPY, ITEMS } from './data/story';
+import { CHAT_IDEAS } from './data/life';
+import { momentOf } from './systems/villagers';
+import { prepareBackstories } from './systems/backstories';
 import { quests, addXp } from './systems/quests';
 import { garden } from './systems/garden';
 import { memory } from './systems/memory';
@@ -33,6 +36,7 @@ export default class Director {
     scene.isBlocked = () => this.blocked();
 
     bus.on('interact', (id) => this.interact(id));
+    bus.on('inspect', (prop) => this.inspect(prop));
     bus.on('book:toggle', () => this.toggleBook());
     bus.on('labels:near', (id) => this.showPrompt(id));
     bus.on('player:pos', (pos) => { if (store.state) { store.state.pos = pos; store.save(); } });
@@ -73,6 +77,7 @@ export default class Director {
 
   begin(fresh) {
     const s = store.state;
+    if (this.ai()) prepareBackstories();
     const v = vars();
     let dog = s.dog;
     if (dog === 'hidden' && quests.currentStep('q3')?.type === 'find') dog = 'lost';
@@ -158,7 +163,7 @@ export default class Director {
 
     // In the evening, villagers you pass tell you what they heard
     const s = store.state;
-    if (s.time !== 'evening' || this.blocked()) return;
+    if (s.time !== 'evening' || this.blocked() || this.scene.currentInterior) return;
     this.barkCooldown -= 16;
     if (this.barkCooldown > 0) return;
     for (const b of BARKS) {
@@ -178,14 +183,42 @@ export default class Director {
 
   // ---------- talking ----------
 
+  async inspect(prop) {
+    if (this.blocked() || this.busy) return;
+    this.busy = true;
+    try {
+      const room = this.scene.currentInterior;
+      if (!room) return;
+      const key = `${room.id}:${room.props.indexOf(prop)}`;
+      if (!store.state.discoveries.includes(key)) {
+        store.state.discoveries.push(key);
+        memory.remember(room.owner, H({ en: `You discovered ${prop.name.en.toLowerCase()}.`, tr: `${prop.name.tr} hakkında bilgi edindin.`, es: `Descubriste: ${prop.name.es}.` }));
+      }
+      this.startTalk('narrator', H(prop.name));
+      await this.dialogue.say(this.line(prop.text), { voice: false });
+    } finally { this.endTalk(); this.busy = false; }
+  }
+
   async interact(id) {
     if (this.blocked() || this.busy) return;
     this.busy = true;
     try {
       const found = quests.stepFor(id);
-      if (found && found.step.type === 'talk') await this.runTalk(found.qid, found.step, id);
-      else if (found && found.step.type === 'find') await this.runFind(found.qid, found.step);
-      else if (id !== 'biscuit') await this.smallTalk(id);
+      if (found && found.step.type === 'talk') {
+        this.startTalk(id);
+        const pick = await this.dialogue.choose([
+          { id: 'chat', icon: '💬', text: H({ en: 'Just chat', tr: 'Sohbet et', es: 'Charlar' }) },
+          { id: 'quest', icon: '📜', text: H(found.step.objective) },
+        ], NPCS[id].name);
+        if (pick === 'chat') {
+          this.chatGreeting(id);
+          await this.freeChat(id, false);
+        } else if (pick === 'quest' && await this.runTalk(found.qid, found.step, id)) await this.freeChat(id, true);
+      } else if (found && found.step.type === 'find') {
+        await this.runFind(found.qid, found.step);
+      } else if (id !== 'biscuit') {
+        await this.smallTalk(id);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -196,15 +229,21 @@ export default class Director {
 
   startTalk(id, name) {
     const s = store.state;
+    this.talkingTo = id;
+    this.talkSession = crypto.randomUUID();
     this.dialogue.holdBack = this.mysteryWords();
     this.scene.faceEachOther(id);
     this.scene.setTalkCamera(true);
     this.hud.setArrow(null);
     this.labels.layer.style.visibility = 'hidden';
     this.dialogue.open(id, { name, hearts: NPCS[id] ? s.hearts[id] : null });
+    this.dialogue.onHistory = () => memory.logTalk(id, this.dialogue.history, this.talkSession, this.scene.conversationContext(id).location);
   }
 
   endTalk() {
+    // The villager remembers this conversation next time
+    if (this.talkingTo && NPCS[this.talkingTo]) this.dialogue.onHistory?.();
+    this.talkingTo = null;
     if (this.dialogue.isOpen) this.dialogue.close();
     this.labels.layer.style.visibility = '';
     this.scene.setTalkCamera(false);
@@ -232,7 +271,7 @@ export default class Director {
         else s.stats.typed += 1;
         store.save();
         const lenient = effort.attempts >= 2 || effort.hintLevel >= 1;
-        const fb = await converse({ mode: 'task', npcId, task, history: this.dialogue.history, said, localOnly, lenient });
+        const fb = await converse({ mode: 'task', npcId, task, history: this.dialogue.history, said, context: { ...this.scene.conversationContext(npcId), session: this.talkSession }, localOnly, lenient });
         (fb.used || []).forEach((id) => usedAll.add(id));
         fb.used = [...usedAll];
         if (fb.playerName && !s.playerName && npcId === 'leo') {
@@ -308,6 +347,7 @@ export default class Director {
       });
       if (ok) addXp(5);
     }
+    return true;
   }
 
   async runFind(qid, step) {
@@ -344,22 +384,40 @@ export default class Director {
     await box.result({ ...summary, grew, hintLevel: result.hintLevel });
   }
 
-  // No quest with this villager: a line that shows they remember you, then free AI chat
+  // No quest with this villager: they tell you what is going on in their life, then you chat freely
   async smallTalk(npcId) {
+    this.startTalk(npcId);
+    this.chatGreeting(npcId);
+    await this.freeChat(npcId, false);
+  }
+
+  chatGreeting(npcId) {
+    const line = this.line(momentOf(npcId).line);
+    this.dialogue.history.push({ who: 'npc', text: line.text });
+    this.dialogue.onHistory?.();
+    this.dialogue.showLine(line.text, line.help);
+  }
+
+  // Free conversation about anything. Gemini plays the villager with their story and memory;
+  // without Gemini, they still answer simple questions (how are you, why, what do you like...).
+  async freeChat(npcId, afterQuest) {
     const s = store.state;
     const box = this.dialogue;
-    const entry = SMALLTALK[npcId].find((x) => x.when(s));
-    this.startTalk(npcId);
-    if (!(await box.say(this.line(entry.line)))) return;
-    if (!this.ai()) return;
+    if (!box.isOpen) return;
     await box.chat({
+      afterQuest,
+      ideas: CHAT_IDEAS.map((i) => ({ icon: i.icon, text: i.text[s.learn], help: i.text[s.help] })),
       onAttempt: async (said, spoken) => {
         s.stats.chats += 1;
         if (spoken) s.stats.spoken += 1;
         store.save();
-        const fb = await converse({ mode: 'chat', npcId, history: box.history, said });
+        const fb = await converse({ mode: 'chat', npcId, history: box.history, said, context: { ...this.scene.conversationContext(npcId), session: this.talkSession } });
         (fb.used || []).forEach((id) => garden.use(id, { stepId: `chat_${npcId}`, helped: false }));
         if (fb.memory) memory.remember(npcId, fb.memory);
+        if (fb.playerName && !s.playerName) {
+          s.playerName = fb.playerName;
+          store.save();
+        }
         addXp(spoken ? 4 : 2);
         return fb;
       },
