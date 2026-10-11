@@ -83,6 +83,20 @@ try {
   await page.waitForSelector('.translation-popup:not([hidden]) button');
   const hoveredWord = await page.$eval('.dlg-word', (el) => el.textContent);
   assert.equal(await page.$eval('.translation-popup strong', (el) => el.textContent), hoveredWord);
+  // An open word popup must disappear immediately over any other dialogue UI.
+  for (const selector of ['.nameplate', '.portrait', '.dlg-tools button', '.dlg-trans', '.turn-title', '.hint-box .chip', '.mic', '.type-box input', '.type-box button', '.dlg-foot']) {
+    await page.hover(selector);
+    assert.equal(await page.$eval('.translation-popup', (el) => el.hidden), true, selector);
+    await page.hover('.dlg-word');
+    await page.waitForSelector('.translation-popup:not([hidden]) button');
+  }
+  // Blank padding in the spoken line is not a word either.
+  await page.$eval('.dlg-line', (line) => line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true })));
+  await wait(300);
+  assert.equal(await page.$eval('.translation-popup', (el) => el.hidden), true);
+  await page.mouse.move(10, 300);
+  await page.hover('.dlg-word');
+  await page.waitForSelector('.translation-popup:not([hidden]) button');
   await page.click('.translation-popup button');
   assert.equal(await page.evaluate(() => window.__wh.store.state.bookmarks.length), 1);
   assert.equal(await page.evaluate(() => window.__wh.store.state.bookmarks[0].text), hoveredWord);

@@ -14,14 +14,19 @@ export default class TranslationPopup {
     root.append(this.tip);
     const show = (e) => {
       const target = e.target.closest('.dlg-word');
-      if (!target || !dialogue.lineEl.contains(target)) { this.scheduleHide(); return; }
+      if (!this.isDialogueWord(target)) { this.scheduleHide(); return; }
       this.show(target);
     };
-    dialogue.root.addEventListener('mouseover', show);
-    dialogue.root.addEventListener('mousemove', show);
-    dialogue.root.addEventListener('focusin', show);
-    dialogue.root.addEventListener('mouseout', (e) => { if (!e.relatedTarget || !this.tip.contains(e.relatedTarget)) this.scheduleHide(); });
-    dialogue.root.addEventListener('focusout', (e) => { if (!this.tip.contains(e.relatedTarget)) this.scheduleHide(); });
+    // Only the spoken line can open a popup. All other dialogue UI dismisses it.
+    dialogue.lineEl.addEventListener('mouseover', show);
+    dialogue.lineEl.addEventListener('mousemove', show);
+    dialogue.lineEl.addEventListener('focusin', show);
+    const dismissUI = (e) => { if (!dialogue.lineEl.contains(e.target)) this.hide(); };
+    dialogue.root.addEventListener('mouseover', dismissUI);
+    dialogue.root.addEventListener('mousemove', dismissUI);
+    dialogue.root.addEventListener('focusin', dismissUI);
+    dialogue.lineEl.addEventListener('mouseleave', (e) => { if (!this.tip.contains(e.relatedTarget)) this.scheduleHide(); });
+    dialogue.lineEl.addEventListener('focusout', (e) => { if (!this.tip.contains(e.relatedTarget)) this.scheduleHide(); });
     const keepOpen = () => { clearTimeout(this.timer); this.timer = null; };
     this.tip.addEventListener('mouseenter', keepOpen);
     this.tip.addEventListener('mouseleave', () => this.scheduleHide());
@@ -34,7 +39,14 @@ export default class TranslationPopup {
   scheduleHide() { if (!this.timer) this.timer = setTimeout(() => this.hide(), 250); }
   hide() { this.ticket++; this.tip.hidden = true; this.target = null; clearTimeout(this.timer); this.timer = null; }
 
+  isDialogueWord(target) {
+    return this.dialogue.isOpen && target?.matches('.dlg-word')
+      && target.parentElement === this.dialogue.lineEl
+      && !target.closest('button, input, textarea, a');
+  }
+
   async show(target) {
+    if (!this.isDialogueWord(target)) { this.hide(); return; }
     clearTimeout(this.timer);
     this.timer = null;
     if (this.target === target && !this.tip.hidden) return;
@@ -56,7 +68,7 @@ export default class TranslationPopup {
     if (!translation) {
       // Avoid API calls when the pointer merely crosses a word.
       await new Promise((resolve) => setTimeout(resolve, 250));
-      if (ticket !== this.ticket || !this.dialogue.isOpen) return;
+      if (ticket !== this.ticket || !this.isDialogueWord(target)) return;
       try {
         const res = await fetch('/api/translate', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -72,7 +84,7 @@ export default class TranslationPopup {
         return;
       }
     }
-    if (ticket !== this.ticket || store.state !== state || !this.dialogue.isOpen) return;
+    if (ticket !== this.ticket || store.state !== state || !this.isDialogueWord(target)) return;
     label.textContent = translation;
     const saved = () => state.bookmarks.some((b) => b.text === text && b.from === from && b.to === to);
     const button = el('button', 'btn small paper');
@@ -89,7 +101,7 @@ export default class TranslationPopup {
   position(target) {
     const r = target.getBoundingClientRect();
     const width = this.tip.offsetWidth, height = this.tip.offsetHeight;
-    this.tip.style.left = `${Math.max(8, Math.min(innerWidth - width - 8, r.left))}px`;
+    this.tip.style.left = `${Math.max(8, Math.min(innerWidth - width - 8, r.right + 8))}px`;
     this.tip.style.top = `${Math.max(8, r.top > height + 12 ? r.top - height - 8 : Math.min(innerHeight - height - 8, r.bottom + 8))}px`;
   }
 }

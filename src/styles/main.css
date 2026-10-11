@@ -489,6 +489,18 @@ button { font: inherit; color: inherit; }
   user-select: none;
 }
 .option:hover { transform: translateY(-2px); }
+.option.quest-choice:not(.disabled) {
+  background: #fff8df;
+  border-color: #bc861b;
+  box-shadow: 0 3px 0 #8c6015, 0 0 12px #efbc4666;
+}
+.option.quest-choice:not(.disabled) .option-text {
+  color: #895500;
+  text-shadow: 0 0 5px #ffd15c, 0 0 12px #efbc4699;
+}
+.option.quest-choice:not(.disabled):is(:hover, :focus-visible) {
+  box-shadow: 0 3px 0 #8c6015, 0 0 18px #efbc4699;
+}
 .option .big { font-size: 34px; display: block; line-height: 1.2; }
 .option .k { font-family: var(--pixel); font-size: 11px; color: var(--ink-soft); }
 .option.right { background: var(--leaf-light); border-color: var(--leaf-dark); animation: pop 0.3s; }

@@ -84,10 +84,6 @@ export default class DialogueBox {
     this.root.append(head, this.turnEl, this.card, this.foot);
     root.appendChild(this.root);
 
-    this.tip = el('div', 'gloss-tip');
-    this.tip.style.display = 'none';
-    root.appendChild(this.tip);
-
     this.bindEvents();
     this.translationPopup = new TranslationPopup(root, this);
   }
@@ -125,7 +121,6 @@ export default class DialogueBox {
     this.typingTimer = null;
     this.isOpen = false;
     this.root.classList.remove('open');
-    this.tip.style.display = 'none';
     this.translationPopup.hide();
     this.input.blur();
     this.closedAt = performance.now();   // so the same E press does not open a new talk
@@ -651,7 +646,7 @@ export default class DialogueBox {
     this.setFoot(false);
     const pick = await new Promise((resolve) => {
       options.forEach((o, i) => {
-        const b = el('button', `option${o.disabled ? ' disabled' : ''}`, [el('span', 'big', o.icon), o.text, el('div', 'k', o.disabled ? o.disabledText || '' : `${i + 1}`)]);
+        const b = el('button', `option${o.quest ? ' quest-choice' : ''}${o.disabled ? ' disabled' : ''}`, [el('span', 'big', o.icon), el('span', 'option-text', o.text), el('div', 'k', o.disabled ? o.disabledText || '' : `${i + 1}`)]);
         if (!o.disabled) b.onclick = () => resolve(o.id);
         opts.appendChild(b);
       });

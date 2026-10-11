@@ -213,7 +213,7 @@ export default class Director {
         if (!(await this.dialogue.say(this.line(greeting)))) return;
         const options = [
           { id: 'chat', icon: '💬', text: H({ en: 'Just chat', tr: 'Sohbet et', es: 'Charlar' }) },
-          ...(found ? [{ id: 'quest', icon: '📜', text: H(found.step.objective) }] : []),
+          ...(found ? [{ id: 'quest', icon: '📜', text: H(found.step.objective), quest: true }] : []),
           { id: 'about', icon: '📖', text: H({ en: 'Tell me about yourself', tr: 'Bana kendini anlat', es: 'Háblame de ti' }) },
           { id: 'leave', icon: '👋', text: H({ en: 'See you later', tr: 'Sonra görüşürüz', es: 'Hasta luego' }) },
         ];
@@ -368,6 +368,7 @@ export default class Director {
 
     const options = step.choices.map((c) => ({
       id: c.id,
+      quest: true,
       icon: c.icon,
       text: H(c.text),
       disabled: Boolean(c.item && !s.items[c.item]),
