@@ -21,7 +21,7 @@ import { speak, stopVoice, prefetch } from '../audio/voice';
 import { startRecording, stopRecording, isRecording, speechMode } from '../audio/mic';
 import { sfx, unlockAudio } from '../audio/sfx';
 import { escapeHtml, shuffle } from '../core/text';
-import TranslationPopup, { translatable } from './TranslationPopup';
+import TranslationPopup from './TranslationPopup';
 
 const TYPE_SPEED = 22; // ms per letter
 
@@ -186,7 +186,6 @@ export default class DialogueBox {
     clearInterval(this.typingTimer);
     this.typingTimer = null;
     this.lineEl.innerHTML = `<i>${escapeHtml(text)}</i>`;
-    translatable(this.lineEl, text, null, store.state.help);
     this.transEl.style.display = 'none';
     this.toolsEl.style.display = 'none';
     this.setFoot(true);
@@ -195,8 +194,6 @@ export default class DialogueBox {
 
   showLine(text, help, voice = true) {
     this.translationPopup.hide();
-    translatable(this.lineEl, text, help);
-    translatable(this.transText, help || '', text, store.state.help);
     this.currentLine = text;
     this.transText.textContent = help || '';
     this.transEl.classList.remove('shown');
@@ -236,41 +233,26 @@ export default class DialogueBox {
     this.lineEl.innerHTML = this.glossed(this.currentLine);
   }
 
-  // Underlines known words; hovering one shows its meaning and picture
+  // Words are separate hover targets; spaces and punctuation stay plain text.
   glossed(text) {
     const lang = store.state.learn;
-    const found = [];
-    Object.entries(WORDS).forEach(([id, w]) => {
+    const known = new Map();
+    Object.entries(WORDS).forEach(([id, word]) => {
       if (this.holdBack.has(id)) return;
-      (w.forms[lang] || []).forEach((form) => {
-        const lower = text.toLocaleLowerCase(lang);
-        let at = lower.indexOf(form.toLocaleLowerCase(lang));
-        while (at !== -1) {
-          const before = at === 0 ? ' ' : lower[at - 1];
-          const after = lower[at + form.length] || ' ';
-          const boundary = (c) => !/[\p{L}\p{N}]/u.test(c);
-          if (boundary(before) && boundary(after)) found.push({ id, at, len: form.length });
-          at = lower.indexOf(form.toLocaleLowerCase(lang), at + 1);
-        }
+      (word.forms[lang] || []).forEach((form) => {
+        if (!/\s/.test(form)) known.set(form.toLocaleLowerCase(lang), id);
       });
     });
-    // Longest first, no overlaps
-    found.sort((a, b) => b.len - a.len);
-    const taken = [];
-    const keep = found.filter((f) => {
-      if (taken.some((x) => f.at < x.at + x.len && x.at < f.at + f.len)) return false;
-      taken.push(f);
-      return true;
-    }).sort((a, b) => a.at - b.at);
-    let html = '';
-    let pos = 0;
-    keep.forEach((f) => {
-      html += escapeHtml(text.slice(pos, f.at));
-      html += `<span class="gloss" data-word="${f.id}">${escapeHtml(text.slice(f.at, f.at + f.len))}</span>`;
-      pos = f.at + f.len;
-    });
-    html += escapeHtml(text.slice(pos));
-    return html;
+    const tokens = /[\p{L}\p{M}]+(?:['\u2019-][\p{L}\p{M}]+)*/gu;
+    let html = '', pos = 0;
+    for (const match of text.matchAll(tokens)) {
+      const word = match[0];
+      const id = known.get(word.toLocaleLowerCase(lang));
+      html += escapeHtml(text.slice(pos, match.index));
+      html += `<span class="dlg-word${id ? ' gloss' : ''}" tabindex="0"${id ? ` data-word="${id}"` : ''}>${escapeHtml(word)}</span>`;
+      pos = match.index + word.length;
+    }
+    return html + escapeHtml(text.slice(pos));
   }
 
   markSeen(text) {
@@ -301,7 +283,7 @@ export default class DialogueBox {
     this.hideTurn();
     const opts = el('div', 'options');
     const reveal = el('div', 'reveal');
-    const target = translatable(el('span', 'target', word.text[s.learn]), word.text[s.learn], word.text[s.help]);
+    const target = el('span', 'target', word.text[s.learn]);
     this.showCard([el('h3', '', [`🌱 ${t('discoverTitle')}`, target]), opts, reveal]);
     this.setFoot(false);
     sfx.chime();
@@ -395,7 +377,7 @@ export default class DialogueBox {
     if (spec.ideas && spec.ideas.length) {
       this.hintBox.appendChild(el('span', 'lbl', `💡 ${t('ideas')}:`));
       spec.ideas.forEach((idea) => {
-        const chip = translatable(el('span', 'chip', [`${idea.icon} ${idea.text}`, el('span', 'meaning', idea.help)]), idea.text, idea.help);
+        const chip = el('span', 'chip', [`${idea.icon} ${idea.text}`, el('span', 'meaning', idea.help)]);
         chip.onclick = () => {
           this.input.value = idea.text;
           speak(idea.text, { voiceId: this.wordVoice, lang: store.state.learn, slow: true });
@@ -456,7 +438,7 @@ export default class DialogueBox {
       const slow = el('button', 'btn small paper', '🐢');
       listen.onclick = () => speak(spec.model, { voiceId: this.wordVoice, lang: s.learn });
       slow.onclick = () => speak(spec.model, { voiceId: this.wordVoice, lang: s.learn, slow: true });
-      this.modelBox.append(translatable(el('span', '', `📜 ${spec.model}`), spec.model, spec.modelHelp), listen, slow, el('span', 'meaning', spec.modelHelp || ''));
+      this.modelBox.append(el('span', '', `📜 ${spec.model}`), listen, slow, el('span', 'meaning', spec.modelHelp || ''));
       this.modelBox.classList.add('open');
       this.hint2Btn.disabled = true;
       this.hint1Btn.disabled = true;
@@ -582,7 +564,7 @@ export default class DialogueBox {
       this.saidEl.append(el('span', '', `⚠️ ${warning}`));
     } else {
       const label = spoken ? `🎤 ${t('youSaid')}:` : `⌨️ ${t('youTyped')}:`;
-      this.saidEl.append(label, ' ', translatable(el('q', '', said), said));
+      this.saidEl.append(label, ' ', el('q', '', said));
       if (used.length) {
         const s = store.state;
         this.saidEl.append('  ', el('span', '', `· ${t('heard')}: `));
@@ -605,7 +587,7 @@ export default class DialogueBox {
     if (better) {
       const listen = el('button', 'btn small paper', '🔊');
       listen.onclick = () => speak(better, { voiceId: this.wordVoice, lang: store.state.learn });
-      body.append(el('div', 'bt', `✨ ${t('betterSay')}:`), translatable(el('span', 'better', [better, ' ', listen]), better, betterHelp));
+      body.append(el('div', 'bt', `✨ ${t('betterSay')}:`), el('span', 'better', [better, ' ', listen]));
       if (betterHelp) body.append(el('div', 'bt', betterHelp));
     }
     this.coachEl.append(el('span', 'ic', nudge ? '💬' : '✨'), body);
@@ -703,7 +685,7 @@ export default class DialogueBox {
       const listen = el('button', 'btn small paper', '🔊');
       listen.onclick = () => speak(summary.better, { voiceId: this.wordVoice, lang: s.learn });
       parts.push(el('div', 'coach open', [el('span', 'ic', '✨'), el('div', '', [
-        el('div', 'bt', `${t('betterSay')}:`), translatable(el('span', 'better', [summary.better, ' ', listen]), summary.better, summary.betterHelp),
+        el('div', 'bt', `${t('betterSay')}:`), el('span', 'better', [summary.better, ' ', listen]),
         summary.betterHelp ? el('div', 'bt', summary.betterHelp) : null,
       ])]));
     }

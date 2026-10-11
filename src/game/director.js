@@ -204,20 +204,27 @@ export default class Director {
     this.busy = true;
     try {
       const found = quests.stepFor(id);
-      if (found && found.step.type === 'talk') {
-        this.startTalk(id);
-        const pick = await this.dialogue.choose([
-          { id: 'chat', icon: '💬', text: H({ en: 'Just chat', tr: 'Sohbet et', es: 'Charlar' }) },
-          { id: 'quest', icon: '📜', text: H(found.step.objective) },
-        ], NPCS[id].name);
-        if (pick === 'chat') {
-          this.chatGreeting(id);
-          await this.freeChat(id, false);
-        } else if (pick === 'quest' && await this.runTalk(found.qid, found.step, id)) await this.freeChat(id, true);
-      } else if (found && found.step.type === 'find') {
+      if (found && found.step.type === 'find') {
         await this.runFind(found.qid, found.step);
-      } else if (id !== 'biscuit') {
-        await this.smallTalk(id);
+      } else if (NPCS[id]) {
+        this.startTalk(id);
+        const intro = found?.step.introBy ? found.step.introBy[id] : found?.step.intro;
+        const greeting = intro?.[0] || momentOf(id).line;
+        if (!(await this.dialogue.say(this.line(greeting)))) return;
+        const options = [
+          { id: 'chat', icon: '💬', text: H({ en: 'Just chat', tr: 'Sohbet et', es: 'Charlar' }) },
+          ...(found ? [{ id: 'quest', icon: '📜', text: H(found.step.objective) }] : []),
+          { id: 'about', icon: '📖', text: H({ en: 'Tell me about yourself', tr: 'Bana kendini anlat', es: 'Háblame de ti' }) },
+          { id: 'leave', icon: '👋', text: H({ en: 'See you later', tr: 'Sonra görüşürüz', es: 'Hasta luego' }) },
+        ];
+        const pick = await this.dialogue.choose(options);
+        if (pick === 'chat') {
+          await this.freeChat(id, false);
+        } else if (pick === 'about') {
+          if (await this.dialogue.say(this.line(NPCS[id].intro))) await this.freeChat(id, false);
+        } else if (pick === 'quest' && await this.runTalk(found.qid, found.step, id, true)) {
+          await this.freeChat(id, true);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -295,16 +302,16 @@ export default class Director {
     return (res.fb.used || []).map((id) => garden.use(id, { stepId, helped: hinted.has(id) })).filter(Boolean);
   }
 
-  async runTalk(qid, step, npcId) {
+  async runTalk(qid, step, npcId, started = false) {
     const s = store.state;
     const box = this.dialogue;
-    this.startTalk(npcId);
+    if (!started) this.startTalk(npcId);
     const intro = step.introBy ? step.introBy[npcId] : step.intro;
     // "Guess first": words that get a guessing card later stay a mystery until then
     box.holdBack = this.mysteryWords();
     [...intro, ...(step.success || [])].forEach((l) => box.prefetchLine(L(l)));
 
-    for (const l of intro) {
+    for (const l of intro.slice(started ? 1 : 0)) {
       if (!(await box.say(this.line(l)))) return;
     }
 
@@ -382,20 +389,6 @@ export default class Director {
     await box.narrate(H(choice.result));
     const summary = quests.completeStep(qid, { stars: result.stars, spoken: result.spoken, choice: pick, npc: null });
     await box.result({ ...summary, grew, hintLevel: result.hintLevel });
-  }
-
-  // No quest with this villager: they tell you what is going on in their life, then you chat freely
-  async smallTalk(npcId) {
-    this.startTalk(npcId);
-    this.chatGreeting(npcId);
-    await this.freeChat(npcId, false);
-  }
-
-  chatGreeting(npcId) {
-    const line = this.line(momentOf(npcId).line);
-    this.dialogue.history.push({ who: 'npc', text: line.text });
-    this.dialogue.onHistory?.();
-    this.dialogue.showLine(line.text, line.help);
   }
 
   // Free conversation about anything. Gemini plays the villager with their story and memory;

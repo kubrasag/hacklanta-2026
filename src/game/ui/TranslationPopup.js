@@ -3,16 +3,6 @@ import { store, H } from '../state/store';
 import { WORDS } from '../data/words';
 
 const cache = new Map();
-export function translatable(node, text, translation, language = store.state.learn) {
-  node.dataset.translationText = text;
-  node.dataset.language = language;
-  if (translation) node.dataset.translation = translation;
-  else delete node.dataset.translation;
-  node.classList.add('translation-source');
-  node.tabIndex = 0;
-  return node;
-}
-
 export default class TranslationPopup {
   constructor(root, dialogue) {
     this.dialogue = dialogue;
@@ -23,8 +13,8 @@ export default class TranslationPopup {
     this.tip.hidden = true;
     root.append(this.tip);
     const show = (e) => {
-      const target = e.target.closest('.gloss, .translation-source') || e.target;
-      if (target.closest('input') || !target.textContent.trim() || target === dialogue.root) return;
+      const target = e.target.closest('.dlg-word');
+      if (!target || !dialogue.lineEl.contains(target)) { this.scheduleHide(); return; }
       this.show(target);
     };
     dialogue.root.addEventListener('mouseover', show);
@@ -32,29 +22,31 @@ export default class TranslationPopup {
     dialogue.root.addEventListener('focusin', show);
     dialogue.root.addEventListener('mouseout', (e) => { if (!e.relatedTarget || !this.tip.contains(e.relatedTarget)) this.scheduleHide(); });
     dialogue.root.addEventListener('focusout', (e) => { if (!this.tip.contains(e.relatedTarget)) this.scheduleHide(); });
-    this.tip.addEventListener('mouseenter', () => clearTimeout(this.timer));
+    const keepOpen = () => { clearTimeout(this.timer); this.timer = null; };
+    this.tip.addEventListener('mouseenter', keepOpen);
     this.tip.addEventListener('mouseleave', () => this.scheduleHide());
-    this.tip.addEventListener('focusin', () => clearTimeout(this.timer));
+    this.tip.addEventListener('focusin', keepOpen);
     this.tip.addEventListener('focusout', (e) => { if (!this.tip.contains(e.relatedTarget)) this.scheduleHide(); });
     this.tip.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') this.hide(); });
     this.tip.addEventListener('click', (e) => e.stopPropagation());
   }
 
-  scheduleHide() { clearTimeout(this.timer); this.timer = setTimeout(() => this.hide(), 250); }
-  hide() { this.ticket++; this.tip.hidden = true; this.target = null; clearTimeout(this.timer); }
+  scheduleHide() { if (!this.timer) this.timer = setTimeout(() => this.hide(), 250); }
+  hide() { this.ticket++; this.tip.hidden = true; this.target = null; clearTimeout(this.timer); this.timer = null; }
 
   async show(target) {
     clearTimeout(this.timer);
+    this.timer = null;
     if (this.target === target && !this.tip.hidden) return;
     this.target = target;
     const ticket = ++this.ticket;
     const state = store.state;
     const word = WORDS[target.dataset.word];
-    const from = word ? state.learn : target.dataset.language || target.closest('[data-language]')?.dataset.language || state.help;
-    const to = from === state.help ? state.learn : state.help;
-    const text = (word ? word.text[from] : target.dataset.translationText || target.textContent).trim().slice(0, 500);
+    const from = state.learn;
+    const to = state.help;
+    const text = target.textContent.trim();
     if (!text) return;
-    let translation = word?.text[to] || target.dataset.translation;
+    let translation = word?.text[to];
     const key = JSON.stringify([from, to, text]);
     translation ||= cache.get(key);
     const label = el('div', 'popup-meaning', translation || H({ en: 'Translating…', tr: 'Çevriliyor…', es: 'Traduciendo…' }));
@@ -62,6 +54,9 @@ export default class TranslationPopup {
     this.tip.hidden = false;
     this.position(target);
     if (!translation) {
+      // Avoid API calls when the pointer merely crosses a word.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      if (ticket !== this.ticket || !this.dialogue.isOpen) return;
       try {
         const res = await fetch('/api/translate', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -73,7 +68,7 @@ export default class TranslationPopup {
         if (typeof translation !== 'string' || !translation.trim()) throw new Error('Empty translation');
         cache.set(key, translation);
       } catch {
-        if (ticket === this.ticket) label.textContent = H({ en: 'Translation unavailable offline. Try a highlighted word or a complete line.', tr: 'Çevrimdışı çeviri kullanılamıyor. Vurgulanan kelimeyi veya tüm satırı dene.', es: 'Traducción no disponible sin conexión. Prueba una palabra resaltada o una frase completa.' });
+        if (ticket === this.ticket) label.textContent = H({ en: 'Word meaning unavailable offline.', tr: 'Kelime anlamı çevrimdışı kullanılamıyor.', es: 'Significado no disponible sin conexión.' });
         return;
       }
     }

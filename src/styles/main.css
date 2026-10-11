@@ -689,8 +689,9 @@ button { font: inherit; color: inherit; }
 .translation-popup { position: fixed; z-index: 10000; width: max-content; max-width: min(360px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; padding: 12px 14px; border: 3px solid var(--wood-deep); border-radius: 12px; background: var(--paper); color: var(--ink); box-shadow: 0 5px 0 #38281e44; pointer-events: auto; font-size: 15px; }
 .translation-popup strong { display: block; overflow-wrap: anywhere; }
 .translation-popup .popup-meaning { margin: 6px 0 9px; overflow-wrap: anywhere; }
-.translation-source { cursor: help; }
-.translation-source:focus-visible { outline: 2px solid var(--leaf-dark); outline-offset: 3px; }
+.dlg-word { cursor: help; }
+.dlg-word:hover { background: var(--leaf-light); border-radius: 3px; }
+.dlg-word:focus-visible { outline: 2px solid var(--leaf-dark); outline-offset: 3px; }
 .bookmark-card { border-bottom: 2px dashed var(--paper-edge); padding: 10px 0; overflow-wrap: anywhere; }
 .bookmark-card p { margin: 5px 0; }
 .bookmark-card button { margin-right: 8px; }
